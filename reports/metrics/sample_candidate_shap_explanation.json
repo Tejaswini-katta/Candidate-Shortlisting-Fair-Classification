@@ -1,0 +1,60 @@
+{
+  "candidate_index": 3304,
+  "enrollee_id": "27970",
+  "base_expected_probability": 0.2133,
+  "candidate_predicted_probability": 0.8704,
+  "top_positive_factors": [
+    {
+      "Feature": "city_development_index",
+      "Feature_Value": -3.0928,
+      "Impact": 2.1058
+    },
+    {
+      "Feature": "company_type_Unknown",
+      "Feature_Value": 1.4537,
+      "Impact": 0.4424
+    },
+    {
+      "Feature": "experience",
+      "Feature_Value": -1.3321,
+      "Impact": 0.2101
+    },
+    {
+      "Feature": "company_type_Pvt Ltd",
+      "Feature_Value": -1.0193,
+      "Impact": 0.1959
+    },
+    {
+      "Feature": "relevent_experience",
+      "Feature_Value": -1.5975,
+      "Impact": 0.1737
+    }
+  ],
+  "top_negative_factors": [
+    {
+      "Feature": "last_new_job",
+      "Feature_Value": -1.1229,
+      "Impact": -0.1041
+    },
+    {
+      "Feature": "enrolled_university_Full time course",
+      "Feature_Value": -0.4977,
+      "Impact": -0.0348
+    },
+    {
+      "Feature": "enrolled_university_no_enrollment",
+      "Feature_Value": 0.6254,
+      "Impact": -0.0292
+    },
+    {
+      "Feature": "gender_Male",
+      "Feature_Value": 0.672,
+      "Impact": -0.0108
+    },
+    {
+      "Feature": "major_discipline_Humanities",
+      "Feature_Value": -0.1911,
+      "Impact": -0.0105
+    }
+  ]
+}

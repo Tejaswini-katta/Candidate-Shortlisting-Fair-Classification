@@ -1,0 +1,3 @@
+Stage,Demographic Parity Difference,Equal Opportunity Difference,Equalized Odds Difference
+Raw Model (Unmitigated),0.1088,0.1719,0.1719
+Fair Model (Mitigated),0.0127,0.0692,0.0692

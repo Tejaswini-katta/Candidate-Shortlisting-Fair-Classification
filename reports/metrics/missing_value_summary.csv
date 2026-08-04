@@ -1,0 +1,15 @@
+Feature,Missing Count,Missing Percentage (%)
+enrollee_id,0,0.0
+city,0,0.0
+city_development_index,0,0.0
+gender,4508,23.53
+relevent_experience,0,0.0
+enrolled_university,386,2.01
+education_level,460,2.4
+major_discipline,2813,14.68
+experience,65,0.34
+company_size,5938,30.99
+company_type,6140,32.05
+last_new_job,423,2.21
+training_hours,0,0.0
+target,0,0.0

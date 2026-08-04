@@ -1,0 +1,30 @@
+Feature_Index,Feature_Name
+0,city_development_index
+1,training_hours
+2,experience
+3,last_new_job
+4,education_level
+5,company_size
+6,relevent_experience
+7,gender_Female
+8,gender_Male
+9,gender_Other
+10,gender_Unknown
+11,enrolled_university_Full time course
+12,enrolled_university_Part time course
+13,enrolled_university_Unknown
+14,enrolled_university_no_enrollment
+15,major_discipline_Arts
+16,major_discipline_Business Degree
+17,major_discipline_Humanities
+18,major_discipline_No Major
+19,major_discipline_Other
+20,major_discipline_STEM
+21,major_discipline_Unknown
+22,company_type_Early Stage Startup
+23,company_type_Funded Startup
+24,company_type_NGO
+25,company_type_Other
+26,company_type_Public Sector
+27,company_type_Pvt Ltd
+28,company_type_Unknown

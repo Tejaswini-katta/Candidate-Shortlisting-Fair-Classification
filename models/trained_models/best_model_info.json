@@ -1,0 +1,15 @@
+{
+  "best_model_name": "Random Forest Benchmark",
+  "best_roc_auc": 0.7854,
+  "metrics": {
+    "Accuracy": 0.7541,
+    "Precision": 0.5596,
+    "Recall": 0.0639,
+    "F1-Score": 0.1147,
+    "ROC-AUC": 0.7854,
+    "TP": 61,
+    "TN": 2828,
+    "FP": 48,
+    "FN": 894
+  }
+}

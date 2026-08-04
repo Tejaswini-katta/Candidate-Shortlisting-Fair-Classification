@@ -1,0 +1,30 @@
+Feature,Mean_Abs_Impact,Importance_Percentage
+city_development_index,0.5959748851120548,28.19
+company_type_Unknown,0.2810674393471614,13.29
+company_type_Pvt Ltd,0.1865078699025271,8.82
+major_discipline_Unknown,0.18192799253988756,8.61
+experience,0.13477867670794383,6.38
+major_discipline_STEM,0.11820681982485805,5.59
+relevent_experience,0.09528302754359673,4.51
+last_new_job,0.07461279233185993,3.53
+company_size,0.06978102366017981,3.3
+company_type_Funded Startup,0.06048182141092553,2.86
+enrolled_university_Full time course,0.05655767675314562,2.68
+enrolled_university_no_enrollment,0.04270072466586969,2.02
+training_hours,0.04115228319552909,1.95
+education_level,0.03244259375441811,1.53
+major_discipline_Humanities,0.020331687303262305,0.96
+company_type_NGO,0.01695635376868119,0.8
+company_type_Early Stage Startup,0.016955218653144453,0.8
+gender_Male,0.014999326506388517,0.71
+major_discipline_Business Degree,0.014930493032511786,0.71
+major_discipline_Arts,0.013924753537672406,0.66
+enrolled_university_Part time course,0.012542270596279948,0.59
+gender_Female,0.009920810897604266,0.47
+major_discipline_No Major,0.006997662601089173,0.33
+gender_Other,0.003812653622742768,0.18
+major_discipline_Other,0.003805848514487962,0.18
+enrolled_university_Unknown,0.0030572098268496846,0.14
+gender_Unknown,0.001842096628629533,0.09
+company_type_Public Sector,0.0013343572309024848,0.06
+company_type_Other,0.0012743243594063815,0.06
