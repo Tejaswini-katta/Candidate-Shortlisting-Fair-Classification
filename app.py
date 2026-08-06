@@ -634,8 +634,200 @@ def render_home_page():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 2: CANDIDATE RANKING  (unchanged logic)
+# PAGE 2: CANDIDATE RANKING
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Experience seniority order for comparison
+_EXP_ORDER = ["<1","1","2","3","4","5","6","7","8","9",
+               "10","11","12","13","14","15","16","17","18","19","20",">20"]
+
+# Education quality tiers
+_EDU_TIER = {
+    "Phd":          3,
+    "Masters":      3,
+    "Graduate":     2,
+    "High School":  1,
+    "Primary School": 0,
+    "Unknown":      1,
+}
+
+
+def generate_candidate_recommendation(candidate_row: dict) -> dict:
+    """
+    Dynamic recommendation engine using existing post-prediction candidate data.
+    No ML model or src/ files are called — pure rule-based signal aggregation.
+
+    Signals used:
+        Suitability Score   — model's predicted probability
+        Priority Tier       — tier assigned by ranking algorithm
+        Experience          — years of work experience
+        Education           — highest education level
+        Training Hours      — training investment by candidate
+        Relevant Exp        — whether candidate has domain-relevant experience
+        City CDI            — city development index (proxy for talent pool)
+
+    Returns:
+        dict with keys:
+            action      str   — short recruiter action label
+            confidence  str   — 'High' | 'Medium' | 'Low'
+            reasons     list  — 2–4 plain-English explanation bullets
+            score_band  str   — 'Excellent'|'Strong'|'Moderate'|'Weak'
+
+    Designed to be easily extended when Job Description matching is added:
+    add a `jd_match_score` parameter and incorporate it into the signal mix.
+    """
+    score       = float(candidate_row.get("Suitability Score", 0))
+    tier        = str(candidate_row.get("Priority Tier", "Reserve"))
+    experience  = str(candidate_row.get("Experience", "Unknown")).strip()
+    education   = str(candidate_row.get("Education", "Unknown")).strip()
+    training    = int(candidate_row.get("Training Hours", 0) or 0)
+    rel_exp     = str(candidate_row.get("Relevant Exp", ""))
+    cdi         = float(candidate_row.get("City CDI", 0) or 0)
+    major       = str(candidate_row.get("Major", ""))
+
+    # ── Derived signal values ──────────────────────────────────────────────
+    # Experience rank (0 = <1 year, 21 = >20 years)
+    exp_rank = _EXP_ORDER.index(experience) if experience in _EXP_ORDER else 5
+    is_senior    = exp_rank >= 14            # 15+ years
+    is_mid       = 4 <= exp_rank <= 13       # 5–14 years
+    is_junior    = 1 <= exp_rank <= 3        # 1–4 years
+    is_entry     = exp_rank == 0             # <1 year
+
+    edu_tier     = _EDU_TIER.get(education, 1)
+    has_rel_exp  = "has relevent" in rel_exp.lower()
+    high_training = training >= 100          # strong learning commitment
+    is_stem      = "STEM" in major
+
+    # Score band
+    if score >= 0.75:   score_band = "Excellent"
+    elif score >= 0.55: score_band = "Strong"
+    elif score >= 0.35: score_band = "Moderate"
+    else:               score_band = "Weak"
+
+    reasons: list[str] = []
+    action  = ""
+    confidence = "Low"
+
+    # ── Decision tree ─────────────────────────────────────────────────────
+    if tier == "High Priority":
+        if score >= 0.75 and (is_senior or is_mid) and has_rel_exp:
+            action     = "Fast-Track Technical Interview"
+            confidence = "High"
+            reasons    = [
+                f"Exceptional suitability score ({score:.3f}) — top {100-float(candidate_row.get('Percentile',100)):.1f}% of cohort",
+                f"{experience} years of experience with relevant domain background",
+                f"{education} education level meets or exceeds role requirements",
+                "Recommend bypassing HR screening — proceed directly to technical panel.",
+            ]
+        elif score >= 0.75 and (is_junior or is_entry):
+            action     = "HR Screening → Technical Interview"
+            confidence = "High"
+            reasons    = [
+                f"Outstanding model score ({score:.3f}) despite early career stage",
+                f"Limited experience ({experience} yrs) warrants an HR screening first",
+                f"High training investment ({training} hrs) shows strong learning drive",
+                "Recommend structured HR assessment followed by technical evaluation.",
+            ]
+        else:
+            action     = "Schedule Technical Interview"
+            confidence = "High"
+            reasons    = [
+                f"High suitability score ({score:.3f}) places candidate in top priority tier",
+                f"Education level ({education}) is appropriate for the role",
+                "Strong overall profile — recommend standard interview process.",
+            ]
+
+    elif tier == "Qualified":
+        if score >= 0.55 and has_rel_exp and edu_tier >= 2:
+            action     = "Schedule Technical Interview"
+            confidence = "High"
+            reasons    = [
+                f"Strong suitability score ({score:.3f}) above threshold",
+                f"Relevant domain experience confirmed",
+                f"{education} education aligns with role requirements",
+                "Candidate meets all key criteria — proceed to interview.",
+            ]
+        elif score >= 0.55 and not has_rel_exp:
+            action     = "HR Pre-Screening Recommended"
+            confidence = "Medium"
+            reasons    = [
+                f"Good model score ({score:.3f}) but no direct relevant experience",
+                f"Training hours ({training} hrs) partially compensate for experience gap",
+                "Recommend HR screening to assess transferable skills.",
+            ]
+        elif high_training and is_stem:
+            action     = "Competency Assessment → Interview"
+            confidence = "Medium"
+            reasons    = [
+                f"Score of {score:.3f} is solid but below top-tier threshold",
+                f"High training hours ({training} hrs) + STEM background suggest growth potential",
+                "Recommend competency test before scheduling interview.",
+            ]
+        else:
+            action     = "Schedule Interview"
+            confidence = "Medium"
+            reasons    = [
+                f"Score ({score:.3f}) qualifies candidate for standard interview pipeline",
+                f"Experience ({experience} yrs) is within acceptable range",
+                "Proceed with standard screening process.",
+            ]
+
+    elif tier == "Extended":
+        if (is_senior or is_mid) and edu_tier >= 2 and has_rel_exp:
+            action     = "Keep in Pipeline — Senior Profile"
+            confidence = "Medium"
+            reasons    = [
+                f"Moderate score ({score:.3f}) but strong seniority ({experience} yrs) compensates",
+                f"{education} education + relevant experience retain value",
+                "Recommend re-evaluation if primary candidates decline.",
+            ]
+        elif high_training:
+            action     = "Competency Assessment Before Interview"
+            confidence = "Medium"
+            reasons    = [
+                f"Score of {score:.3f} falls in extended pool range",
+                f"Strong training commitment ({training} hrs) indicates adaptability",
+                "Recommend formal competency test before progressing.",
+            ]
+        else:
+            action     = "Hold — Requires Further Evaluation"
+            confidence = "Low"
+            reasons    = [
+                f"Suitability score ({score:.3f}) is below the standard shortlisting threshold",
+                f"Experience ({experience} yrs) and education ({education}) do not strongly differentiate",
+                "Keep on file for future roles or re-application.",
+            ]
+
+    else:  # Reserve
+        if score >= 0.25 and (is_senior or high_training):
+            action     = "Flag for Future Re-evaluation"
+            confidence = "Low"
+            reasons    = [
+                f"Low current suitability score ({score:.3f}) but mitigated by experience ({experience} yrs)",
+                f"Training hours ({training} hrs) indicate proactive skill development",
+                "Monitor for future openings or role-specific requirements.",
+            ]
+        else:
+            action     = "Not Recommended at This Stage"
+            confidence = "Low"
+            reasons    = [
+                f"Suitability score ({score:.3f}) is significantly below shortlisting threshold",
+                f"Current profile (exp: {experience} yrs, edu: {education}) does not meet preferred criteria",
+                "Recommend not progressing further in the current cycle.",
+            ]
+
+    # CDI bonus reason
+    if cdi >= 0.90 and confidence != "High":
+        reasons.append(f"Located in a high-development city (CDI: {cdi:.3f}) — strong talent market indicator.")
+
+    return {
+        "action":     action,
+        "confidence": confidence,
+        "reasons":    reasons[:4],   # cap at 4 bullets
+        "score_band": score_band,
+    }
+
+
 def _build_ranking_df() -> pd.DataFrame:
     """
     Join candidate_rankings.csv with aug_test.csv on enrollee_id to produce
@@ -653,7 +845,7 @@ def _build_ranking_df() -> pd.DataFrame:
     else:
         merged = rankings.copy()
 
-    # ── Friendly column names ───────────────────────────────────────────────
+    # ── Friendly column names ────────────────────────────────────────────────
     col_map = {
         "enrollee_id":            "Candidate ID",
         "prediction_probability": "Suitability Score",
@@ -672,30 +864,19 @@ def _build_ranking_df() -> pd.DataFrame:
     }
     merged = merged.rename(columns={k: v for k, v in col_map.items() if k in merged.columns})
 
-    # ── Recommendation label from tier + score ──────────────────────────────
-    def _recommend(row):
-        tier  = row.get("Priority Tier", "")
-        score = row.get("Suitability Score", 0)
-        if tier == "High Priority":
-            return "⚡ Immediate Interview"
-        elif tier == "Qualified":
-            return "✅ Schedule Interview"
-        elif tier == "Extended":
-            return "📋 Keep in Pipeline"
-        else:
-            return "🔄 Future Consideration"
+    # ── Clean up string columns ──────────────────────────────────────────────
+    for col in ["Experience", "Education", "Gender", "Company Type", "Relevant Exp"]:
+        if col in merged.columns:
+            merged[col] = merged[col].fillna("Unknown").astype(str)
 
-    merged["Recommendation"] = merged.apply(_recommend, axis=1)
-
-    # ── Clean up experience values ──────────────────────────────────────────
-    if "Experience" in merged.columns:
-        merged["Experience"] = merged["Experience"].fillna("Unknown").astype(str)
-    if "Education" in merged.columns:
-        merged["Education"] = merged["Education"].fillna("Unknown")
-    if "Gender" in merged.columns:
-        merged["Gender"] = merged["Gender"].fillna("Unknown")
-    if "Company Type" in merged.columns:
-        merged["Company Type"] = merged["Company Type"].fillna("Unknown")
+    # ── Dynamic recommendation via generate_candidate_recommendation ─────────
+    recs = merged.apply(
+        lambda row: generate_candidate_recommendation(row.to_dict()), axis=1
+    )
+    merged["Recommendation"] = recs.apply(lambda r: r["action"])
+    merged["Confidence"]     = recs.apply(lambda r: r["confidence"])
+    # Store full rec dict as JSON string for spotlight panel lookup
+    merged["_rec_json"]      = recs.apply(lambda r: json.dumps(r))
 
     return merged
 
@@ -894,7 +1075,7 @@ def render_ranking_page():
         "Candidate ID", "Gender", "Experience", "Education", "Major",
         "Company Type", "Training Hours", "City CDI",
         "Suitability Score", "Percentile", "Priority Tier",
-        "Shortlisted", "Recommendation"
+        "Shortlisted", "Confidence", "Recommendation"
     ]
     show_cols = [c for c in display_cols_ordered if c in page_df.columns]
 
@@ -968,6 +1149,115 @@ def render_ranking_page():
             mime="text/csv",
             use_container_width=True,
         )
+
+    # ── Candidate Spotlight ───────────────────────────────────────────────────
+    st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-header">🔍 Candidate Spotlight — Full Recommendation</div>',
+        unsafe_allow_html=True
+    )
+
+    spotlight_ids = fdf["Candidate ID"].astype(str).tolist()
+    sel_id = st.selectbox(
+        "Select a Candidate ID to view detailed recommendation",
+        options=spotlight_ids,
+        index=0,
+        key="spotlight_candidate",
+        label_visibility="collapsed",
+    )
+
+    if sel_id:
+        row_data = fdf[fdf["Candidate ID"].astype(str) == sel_id]
+        if not row_data.empty:
+            r = row_data.iloc[0]
+            rec        = json.loads(r.get("_rec_json", "{}"))
+            action     = rec.get("action", "N/A")
+            confidence = rec.get("confidence", "Low")
+            reasons    = rec.get("reasons", [])
+            score_band = rec.get("score_band", "")
+
+            CONF_COLORS = {
+                "High":   ("#10b981", "rgba(16,185,129,0.08)",  "rgba(16,185,129,0.2)"),
+                "Medium": ("#f59e0b", "rgba(245,158,11,0.08)",  "rgba(245,158,11,0.2)"),
+                "Low":    ("#6b7280", "rgba(107,114,128,0.08)", "rgba(107,114,128,0.2)"),
+            }
+            BAND_COLORS = {
+                "Excellent": "#10b981", "Strong": "#3b82f6",
+                "Moderate":  "#f59e0b", "Weak":   "#ef4444",
+            }
+            c_color, c_bg, c_border = CONF_COLORS.get(confidence, CONF_COLORS["Low"])
+            band_hex = BAND_COLORS.get(score_band, "#6b7280")
+
+            sc1, sc2 = st.columns([1, 2], gap="large")
+
+            with sc1:
+                profile_fields = [
+                    ("🪪 Candidate ID",      str(r.get("Candidate ID", "")),                t["text_primary"]),
+                    ("📊 Suitability Score", f"{r.get('Suitability Score', 0):.4f}",         band_hex),
+                    ("📈 Percentile",        f"{r.get('Percentile', 0):.1f}%",               t["text_primary"]),
+                    ("🏆 Priority Tier",     str(r.get("Priority Tier", "")),                c_color),
+                    ("👤 Gender",            str(r.get("Gender", "")),                       t["text_secondary"]),
+                    ("🎓 Education",         str(r.get("Education", "")),                    t["text_secondary"]),
+                    ("💼 Experience",        f"{r.get('Experience', '')} yrs",               t["text_secondary"]),
+                    ("📚 Major",             str(r.get("Major", "")),                        t["text_secondary"]),
+                    ("Training Hours",       f"{int(r.get('Training Hours', 0) or 0)} hrs",  t["text_secondary"]),
+                    ("🏢 Company Type",      str(r.get("Company Type", "")),                 t["text_secondary"]),
+                    ("Relevant Exp",         str(r.get("Relevant Exp", "")),                 t["text_secondary"]),
+                ]
+                profile_rows = ""
+                for label, value, color in profile_fields:
+                    profile_rows += (
+                        f'<div style="display:flex;justify-content:space-between;padding:5px 0;'
+                        f'border-bottom:1px solid {t["panel_border_l"]};">'
+                        f'<span style="color:{t["text_label"]};font-size:0.77rem;">{label}</span>'
+                        f'<span style="color:{color};font-weight:600;font-size:0.8rem;">{value}</span>'
+                        f'</div>'
+                    )
+                st.markdown(
+                    f'<div class="panel-card"><div style="color:{t["text_primary"]};font-weight:700;'
+                    f'font-size:0.88rem;margin-bottom:12px;">Candidate Profile</div>'
+                    + profile_rows + '</div>',
+                    unsafe_allow_html=True
+                )
+
+            with sc2:
+                reasons_html = ""
+                for i, reason in enumerate(reasons):
+                    bullet = ["(1)", "(2)", "(3)", "(4)"][i] if i < 4 else "-"
+                    reasons_html += (
+                        f'<div style="display:flex;align-items:flex-start;gap:10px;'
+                        f'padding:8px 0;border-bottom:1px solid {t["panel_border_l"]};">'
+                        f'<span style="color:{c_color};font-size:0.85rem;font-weight:700;flex-shrink:0;">{bullet}</span>'
+                        f'<span style="color:{t["text_secondary"]};font-size:0.83rem;line-height:1.5;">{reason}</span>'
+                        f'</div>'
+                    )
+                st.markdown(
+                    f'<div class="panel-card">'
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">'
+                    f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.88rem;">AI Recommendation</div>'
+                    f'<div style="display:flex;gap:8px;">'
+                    f'<span style="background:{band_hex}22;color:{band_hex};border:1px solid {band_hex}44;'
+                    f'padding:2px 10px;border-radius:20px;font-size:0.68rem;font-weight:700;">{score_band}</span>'
+                    f'<span style="background:{c_bg};color:{c_color};border:1px solid {c_border};'
+                    f'padding:2px 10px;border-radius:20px;font-size:0.68rem;font-weight:700;">{confidence} Confidence</span>'
+                    f'</div></div>'
+                    f'<div style="background:{c_bg};border:1px solid {c_border};border-radius:10px;'
+                    f'padding:14px 18px;margin-bottom:16px;">'
+                    f'<div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;'
+                    f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;">Recommended Action</div>'
+                    f'<div style="color:{c_color};font-size:1.05rem;font-weight:800;">{action}</div>'
+                    f'</div>'
+                    f'<div style="color:{t["text_primary"]};font-size:0.77rem;font-weight:700;margin-bottom:8px;">Key Reasons</div>'
+                    + reasons_html +
+                    f'<div style="margin-top:14px;padding:10px;background:rgba(59,130,246,0.05);'
+                    f'border-radius:8px;border:1px solid rgba(59,130,246,0.12);">'
+                    f'<span style="color:{t["text_muted"]};font-size:0.7rem;">'
+                    f'Signals used: Suitability Score, Priority Tier, Experience, Education, '
+                    f'Training Hours, Relevant Experience, City CDI. '
+                    f'Job Description matching will be added in a future phase.</span>'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
