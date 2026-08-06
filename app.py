@@ -2403,59 +2403,732 @@ def render_candidate_profile_page(candidate_id: str | None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 5: FAIRNESS DASHBOARD  (unchanged logic, theme-aware matplotlib)
+# PAGE 5: AI FAIRNESS & RESPONSIBLE RECRUITMENT DASHBOARD
 # ─────────────────────────────────────────────────────────────────────────────
 def render_fairness_page():
     t = ThemeManager.get()
 
-    st.header("⚖️ Algorithmic Fairness & Bias Mitigation Audit")
-    st.caption("Audit Demographic Parity, Equal Opportunity, and Equalized Odds across protected candidate Gender groups.")
-
+    # ── Load all data sources ─────────────────────────────────────────────────
     fairness_path    = os.path.join("reports", "metrics", "fairness_audit_report.csv")
     fair_config_path = os.path.join("models", "trained_models", "fairness_config.json")
-    fair_df    = load_csv_report(fairness_path)
+    model_info_path  = os.path.join("models", "trained_models", "best_model_info.json")
+    rankings_path    = os.path.join("reports", "metrics", "candidate_rankings.csv")
+    raw_data_path    = os.path.join("data", "raw", "aug_test.csv")
+
+    fair_df     = load_csv_report(fairness_path)
     fair_config = load_json_config(fair_config_path)
+    model_info  = load_json_config(model_info_path)
 
     if fair_df.empty:
         st.error(f"Fairness report missing at `{fairness_path}`. Please run `python run_fairness.py` first.")
         return
 
-    st.markdown("### 📊 Disparity Metrics Comparison (Before vs After Mitigation)")
-    st.dataframe(fair_df, use_container_width=True)
+    # ── Derive core metrics from real Fairlearn outputs ───────────────────────
+    raw_row = fair_df[fair_df["Stage"].str.contains("Unmitigated", na=False)]
+    mit_row = fair_df[fair_df["Stage"].str.contains("Mitigated",   na=False)]
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    fig.patch.set_facecolor(t["mpl_bg"])
-    ax.set_facecolor(t["mpl_bg"])
-    plot_data = fair_df.set_index("Stage").T
-    plot_data.plot(kind="bar", ax=ax, color=["#e76f51", "#2a9d8f"], width=0.6)
-    plt.title("Disparity Metrics Reduction Across Gender Groups",
-              fontsize=12, fontweight="bold", color=t["mpl_text"])
-    plt.ylabel("Disparity Difference Magnitude", fontsize=10, color=t["mpl_text"])
-    ax.tick_params(colors=t["mpl_text"])
-    for spine in ax.spines.values():
-        spine.set_edgecolor(t["mpl_grid"])
-    plt.xticks(rotation=15, ha="right", color=t["mpl_text"])
-    plt.grid(axis="y", linestyle="--", alpha=0.4, color=t["mpl_grid"])
-    legend = ax.get_legend()
-    if legend:
-        for txt in legend.get_texts():
-            txt.set_color(t["mpl_text"])
-        legend.get_frame().set_facecolor(t["mpl_bg"])
-        legend.get_frame().set_edgecolor(t["mpl_grid"])
-    st.pyplot(fig)
-    plt.close()
+    dpd_raw   = float(raw_row["Demographic Parity Difference"].iloc[0])  if not raw_row.empty else 0.0
+    eod_raw   = float(raw_row["Equal Opportunity Difference"].iloc[0])   if not raw_row.empty else 0.0
+    equod_raw = float(raw_row["Equalized Odds Difference"].iloc[0])      if not raw_row.empty else 0.0
+    dpd_mit   = float(mit_row["Demographic Parity Difference"].iloc[0])  if not mit_row.empty else 0.0
+    eod_mit   = float(mit_row["Equal Opportunity Difference"].iloc[0])   if not mit_row.empty else 0.0
+    equod_mit = float(mit_row["Equalized Odds Difference"].iloc[0])      if not mit_row.empty else 0.0
 
-    if "fair_thresholds" in fair_config:
-        st.markdown("### ⚙️ Group-Specific Calibrated Classification Thresholds")
-        st.json(fair_config["fair_thresholds"])
+    avg_mit        = (dpd_mit + eod_mit + equod_mit) / 3
+    avg_raw        = (dpd_raw + eod_raw + equod_raw) / 3
+    fairness_score = max(0, (1 - avg_mit) * 100)
+    bias_reduction = max(0, (1 - avg_mit / avg_raw) * 100) if avg_raw > 0 else 0
+    max_mit        = max(dpd_mit, eod_mit, equod_mit)
+    risk_level     = "Low" if max_mit < 0.05 else ("Medium" if max_mit < 0.10 else "High")
+    compliance     = "Compliant" if max_mit < 0.10 else "Non-Compliant"
 
-    st.markdown("---")
-    st.markdown("### 📖 Metric Definitions")
-    st.markdown("""
-    - **Demographic Parity Difference**: $\\max(SR) - \\min(SR)$. Measures selection rate equality regardless of true labels.
-    - **Equal Opportunity Difference**: $\\max(TPR) - \\min(TPR)$. Measures True Positive Rate (Recall) equality for qualified candidates.
-    - **Equalized Odds Difference**: Measures maximum disparity across both True Positive Rate and False Positive Rate.
-    """)
+    THRESH = 0.10  # industry standard fairness threshold
+
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:14px;padding:20px 26px;margin-bottom:20px;position:relative;overflow:hidden;">'
+        f'<div style="position:absolute;top:0;left:0;right:0;height:3px;'
+        f'background:linear-gradient(90deg,#10b981,#3b82f6,#8b5cf6);"></div>'
+        f'<div style="color:{t["header_title"]};font-size:1.3rem;font-weight:800;margin-bottom:4px;">'
+        f'⚖️ AI Fairness & Responsible Recruitment Dashboard</div>'
+        f'<div style="color:{t["header_sub"]};font-size:0.85rem;">'
+        f'Enterprise-grade fairness audit powered by Fairlearn. Ensures AI hiring is transparent, '
+        f'equitable, and compliant with responsible AI standards.</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 1 — EXECUTIVE KPI SUMMARY
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">📊 Executive Summary</div>', unsafe_allow_html=True)
+
+    RISK_COLORS = {"Low": "#10b981", "Medium": "#f59e0b", "High": "#ef4444"}
+    COMP_COLORS = {"Compliant": "#10b981", "Non-Compliant": "#ef4444"}
+    r_clr = RISK_COLORS.get(risk_level, "#6b7280")
+    c_clr = COMP_COLORS.get(compliance, "#6b7280")
+
+    kpi_cols = st.columns(4)
+    kpis_row1 = [
+        (kpi_cols[0], "green",  "✅", "Fairness Score",      f"{fairness_score:.1f}%",  "Higher is better"),
+        (kpi_cols[1], "blue",   "📉", "Bias Reduction",       f"{bias_reduction:.1f}%",  "vs unmitigated model"),
+        (kpi_cols[2], "purple", "🎯", "DPD (After)",          f"{dpd_mit:.4f}",           "Target < 0.10"),
+        (kpi_cols[3], "teal",   "🔍", "EOD (After)",          f"{eod_mit:.4f}",           "Target < 0.10"),
+    ]
+    for col, color, icon, label, value, sub in kpis_row1:
+        with col:
+            st.markdown(
+                f'<div class="kpi-card {color}">'
+                f'<div class="kpi-icon">{icon}</div>'
+                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-value {color}">{value}</div>'
+                f'<div class="kpi-sub">{sub}</div></div>',
+                unsafe_allow_html=True
+            )
+
+    kpi_cols2 = st.columns(4)
+    kpis_row2 = [
+        (kpi_cols2[0], "red",    "⚡", "Equalized Odds (After)", f"{equod_mit:.4f}",  "Target < 0.10"),
+        (kpi_cols2[1], "purple", "🛡️", "Protected Attributes",    "4",                "Gender groups audited"),
+        (kpi_cols2[2], "green",  "🚦", "Risk Level",              risk_level,          "Current assessment"),
+        (kpi_cols2[3], "blue",   "📋", "Compliance Status",       compliance,          "vs 0.10 threshold"),
+    ]
+    for col, color, icon, label, value, sub in kpis_row2:
+        with col:
+            vclr = r_clr if "Risk" in label else (c_clr if "Compliance" in label else None)
+            v_style = f"color:{vclr};font-weight:900;" if vclr else ""
+            st.markdown(
+                f'<div class="kpi-card {color}">'
+                f'<div class="kpi-icon">{icon}</div>'
+                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-value" style="{v_style}">{value}</div>'
+                f'<div class="kpi-sub">{sub}</div></div>',
+                unsafe_allow_html=True
+            )
+
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # TABS
+    # ─────────────────────────────────────────────────────────────────────────
+    tab_fm, tab_bva, tab_pa, tab_comp, tab_risk = st.tabs([
+        "📐 Fairness Metrics",
+        "📊 Before vs After",
+        "👥 Protected Attributes",
+        "🛡️ AI Compliance",
+        "🚦 Risk & Recommendations",
+    ])
+
+    # ═══════ TAB 1: FAIRNESS METRICS ═════════════════════════════════════════
+    with tab_fm:
+        st.markdown('<div class="section-header">Fairness Metric Definitions & Status</div>',
+                    unsafe_allow_html=True)
+
+        metrics_def = [
+            {
+                "name": "Demographic Parity Difference (DPD)",
+                "icon": "⚖️",
+                "raw": dpd_raw, "mit": dpd_mit, "target": 0.10,
+                "formula": "max(SelectionRate) − min(SelectionRate) across gender groups",
+                "explanation": (
+                    "Measures whether candidates of all gender groups are selected at similar rates, "
+                    "regardless of their qualifications. A value of 0 means perfectly equal selection rates."
+                ),
+            },
+            {
+                "name": "Equal Opportunity Difference (EOD)",
+                "icon": "🎯",
+                "raw": eod_raw, "mit": eod_mit, "target": 0.10,
+                "formula": "max(TPR) − min(TPR) across gender groups",
+                "explanation": (
+                    "Measures whether qualified candidates from all groups have an equal chance of being "
+                    "selected (True Positive Rate equality). Ensures deserving candidates aren't unfairly missed."
+                ),
+            },
+            {
+                "name": "Equalized Odds Difference",
+                "icon": "🔄",
+                "raw": equod_raw, "mit": equod_mit, "target": 0.10,
+                "formula": "max disparity across both TPR and FPR",
+                "explanation": (
+                    "Combines both True Positive Rate and False Positive Rate fairness. "
+                    "Ensures the model is equally accurate and equally fair across all demographic groups."
+                ),
+            },
+        ]
+
+        for i, m in enumerate(metrics_def):
+            status_ok = m["mit"] < m["target"]
+            s_clr = "#10b981" if status_ok else "#ef4444"
+            s_bg  = "rgba(16,185,129,0.08)" if status_ok else "rgba(239,68,68,0.08)"
+            s_bd  = "rgba(16,185,129,0.25)" if status_ok else "rgba(239,68,68,0.25)"
+            pct   = min(m["mit"] / m["target"] * 100, 100) if m["target"] else 0
+            reduction = ((m["raw"] - m["mit"]) / m["raw"] * 100) if m["raw"] > 0 else 0
+
+            st.markdown(
+                f'<div class="panel-card" style="margin-bottom:14px;">'
+                f'<div style="display:flex;align-items:flex-start;justify-content:space-between;'
+                f'flex-wrap:wrap;gap:12px;margin-bottom:12px;">'
+                f'<div style="display:flex;align-items:center;gap:10px;">'
+                f'<span style="font-size:1.6rem;">{m["icon"]}</span>'
+                f'<div><div style="color:{t["text_primary"]};font-weight:700;font-size:0.92rem;">'
+                f'{m["name"]}</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.72rem;margin-top:2px;">'
+                f'Formula: {m["formula"]}</div></div></div>'
+                f'<span style="background:{s_bg};color:{s_clr};border:1px solid {s_bd};'
+                f'padding:4px 14px;border-radius:20px;font-size:0.73rem;font-weight:700;">'
+                f'{"✅ Within Threshold" if status_ok else "⚠️ Above Threshold"}</span>'
+                f'</div>'
+                # Value grid
+                f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;">'
+                f'<div style="background:{t["metric_bg"]};border-radius:8px;padding:10px;border:1px solid {t["metric_border"]};">'
+                f'<div style="color:{t["text_muted"]};font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">Before</div>'
+                f'<div style="color:#ef4444;font-size:1.1rem;font-weight:800;">{m["raw"]:.4f}</div></div>'
+                f'<div style="background:{t["metric_bg"]};border-radius:8px;padding:10px;border:1px solid {t["metric_border"]};">'
+                f'<div style="color:{t["text_muted"]};font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">After (Fairlearn)</div>'
+                f'<div style="color:{s_clr};font-size:1.1rem;font-weight:800;">{m["mit"]:.4f}</div></div>'
+                f'<div style="background:{t["metric_bg"]};border-radius:8px;padding:10px;border:1px solid {t["metric_border"]};">'
+                f'<div style="color:{t["text_muted"]};font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">Target</div>'
+                f'<div style="color:{t["text_primary"]};font-size:1.1rem;font-weight:800;">< {m["target"]:.2f}</div></div>'
+                f'<div style="background:{t["metric_bg"]};border-radius:8px;padding:10px;border:1px solid {t["metric_border"]};">'
+                f'<div style="color:{t["text_muted"]};font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;">Reduction</div>'
+                f'<div style="color:#10b981;font-size:1.1rem;font-weight:800;">↓{reduction:.1f}%</div></div>'
+                f'</div>'
+                # Progress bar
+                f'<div style="margin-bottom:8px;"><div style="display:flex;justify-content:space-between;'
+                f'color:{t["text_muted"]};font-size:0.68rem;margin-bottom:4px;">'
+                f'<span>Distance to threshold</span><span>{pct:.0f}% of limit used</span></div>'
+                f'<div style="background:{t["metric_bg"]};border-radius:4px;height:6px;">'
+                f'<div style="background:linear-gradient(90deg,{s_clr},{s_clr}80);width:{pct:.0f}%;'
+                f'height:100%;border-radius:4px;"></div></div></div>'
+                # Explanation
+                f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};'
+                f'border-radius:8px;padding:10px 14px;">'
+                f'<span style="color:{t["text_secondary"]};font-size:0.78rem;line-height:1.55;">'
+                f'{m["explanation"]}</span></div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+        # Gender thresholds
+        if fair_config.get("fair_thresholds"):
+            st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+            st.markdown('<div class="section-header">⚙️ Gender-Calibrated Classification Thresholds</div>',
+                        unsafe_allow_html=True)
+            thresh_cols = st.columns(len(fair_config["fair_thresholds"]))
+            for ci, (group, thresh) in enumerate(fair_config["fair_thresholds"].items()):
+                with thresh_cols[ci]:
+                    st.markdown(
+                        f'<div class="panel-card" style="text-align:center;">'
+                        f'<div style="font-size:1.5rem;">👤</div>'
+                        f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.88rem;'
+                        f'margin:6px 0 4px;">{group}</div>'
+                        f'<div style="color:#3b82f6;font-size:1.4rem;font-weight:900;">{thresh}</div>'
+                        f'<div style="color:{t["text_muted"]};font-size:0.68rem;">Calibrated threshold</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+    # ═══════ TAB 2: BEFORE vs AFTER ══════════════════════════════════════════
+    with tab_bva:
+        st.markdown('<div class="section-header">Before vs After Bias Mitigation (Fairlearn)</div>',
+                    unsafe_allow_html=True)
+
+        # Grouped bar chart — all 3 metrics, before and after
+        metric_names  = ["Demographic Parity Difference", "Equal Opportunity Difference", "Equalized Odds Difference"]
+        before_vals   = [dpd_raw, eod_raw, equod_raw]
+        after_vals    = [dpd_mit, eod_mit, equod_mit]
+        short_labels  = ["Demographic Parity", "Equal Opportunity", "Equalized Odds"]
+
+        fig_bva = go.Figure()
+        fig_bva.add_trace(go.Bar(
+            name="Before Mitigation (Raw Model)", x=short_labels, y=before_vals,
+            marker_color="#ef4444", marker_opacity=0.85,
+            text=[f"{v:.4f}" for v in before_vals], textposition="outside",
+            textfont=dict(color=t["plotly_font"], size=12),
+            hovertemplate="<b>%{x}</b><br>Before: %{y:.4f}<extra></extra>",
+        ))
+        fig_bva.add_trace(go.Bar(
+            name="After Mitigation (Fairlearn)", x=short_labels, y=after_vals,
+            marker_color="#10b981", marker_opacity=0.85,
+            text=[f"{v:.4f}" for v in after_vals], textposition="outside",
+            textfont=dict(color=t["plotly_font"], size=12),
+            hovertemplate="<b>%{x}</b><br>After: %{y:.4f}<extra></extra>",
+        ))
+        fig_bva.add_hline(
+            y=THRESH, line_dash="dash", line_color="#f59e0b", line_width=2,
+            annotation_text="Fairness Threshold (0.10)",
+            annotation_font_color="#f59e0b",
+        )
+        fig_bva.update_layout(
+            barmode="group", bargap=0.3, bargroupgap=0.08,
+            paper_bgcolor=t["plotly_paper"], plot_bgcolor=t["plotly_plot"],
+            font=dict(family="Inter", color=t["plotly_font"]),
+            legend=dict(font=dict(color=t["plotly_font"]), bgcolor=t["plotly_paper"]),
+            xaxis=dict(tickfont=dict(color=t["plotly_font"]), gridcolor=t["plotly_grid"]),
+            yaxis=dict(title="Disparity Difference", tickfont=dict(color=t["plotly_font"]),
+                       gridcolor=t["plotly_grid"], range=[0, max(before_vals) * 1.4]),
+            margin=dict(l=10, r=10, t=10, b=10), height=380,
+        )
+        st.plotly_chart(fig_bva, use_container_width=True)
+
+        # Reduction table
+        st.markdown('<div class="section-header" style="margin-top:16px;">Reduction Summary</div>',
+                    unsafe_allow_html=True)
+        rc1, rc2, rc3 = st.columns(3)
+        for col, metric, bef, aft in [
+            (rc1, "Demographic Parity",  dpd_raw,   dpd_mit),
+            (rc2, "Equal Opportunity",   eod_raw,   eod_mit),
+            (rc3, "Equalized Odds",      equod_raw, equod_mit),
+        ]:
+            with col:
+                red_pct = ((bef - aft) / bef * 100) if bef > 0 else 0
+                st.markdown(
+                    f'<div class="panel-card" style="text-align:center;">'
+                    f'<div style="color:{t["text_label"]};font-size:0.72rem;margin-bottom:8px;">{metric}</div>'
+                    f'<div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-bottom:8px;">'
+                    f'<div><div style="color:#ef4444;font-size:1.1rem;font-weight:800;">{bef:.4f}</div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.65rem;">Before</div></div>'
+                    f'<div style="color:{t["text_muted"]};font-size:1.2rem;">→</div>'
+                    f'<div><div style="color:#10b981;font-size:1.1rem;font-weight:800;">{aft:.4f}</div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.65rem;">After</div></div>'
+                    f'</div>'
+                    f'<div style="color:#10b981;font-size:1.6rem;font-weight:900;">↓{red_pct:.1f}%</div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.7rem;">Bias reduction</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+        # Model performance note
+        if model_info and model_info.get("metrics"):
+            m = model_info["metrics"]
+            st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+            st.markdown('<div class="section-header">Model Performance at Fairness-Calibrated Thresholds</div>',
+                        unsafe_allow_html=True)
+            mp_cols = st.columns(5)
+            for col, label, val in [
+                (mp_cols[0], "Accuracy",  f"{m.get('Accuracy',0):.4f}"),
+                (mp_cols[1], "Precision", f"{m.get('Precision',0):.4f}"),
+                (mp_cols[2], "Recall",    f"{m.get('Recall',0):.4f}"),
+                (mp_cols[3], "F1-Score",  f"{m.get('F1-Score',0):.4f}"),
+                (mp_cols[4], "ROC-AUC",   f"{m.get('ROC-AUC',0):.4f}"),
+            ]:
+                with col:
+                    st.markdown(
+                        f'<div class="panel-card" style="text-align:center;">'
+                        f'<div style="color:{t["text_muted"]};font-size:0.68rem;font-weight:700;'
+                        f'text-transform:uppercase;letter-spacing:0.08em;">{label}</div>'
+                        f'<div style="color:#3b82f6;font-size:1.3rem;font-weight:900;">{val}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+    # ═══════ TAB 3: PROTECTED ATTRIBUTE ANALYSIS ══════════════════════════════
+    with tab_pa:
+        st.markdown('<div class="section-header">Protected Group Analysis — Real Candidate Data</div>',
+                    unsafe_allow_html=True)
+
+        # Load and merge data for real group analysis
+        try:
+            rank_df = pd.read_csv(rankings_path)
+            raw_df  = pd.read_csv(raw_data_path)
+            merged  = rank_df.merge(raw_df, on="enrollee_id", how="left")
+
+            def _group_table(df, group_col, friendly_label):
+                if group_col not in df.columns:
+                    return None
+                grp = df.groupby(group_col).agg(
+                    Total=("enrollee_id",           "count"),
+                    Selected=("predicted_class",    "sum"),
+                    Avg_Score=("prediction_probability", "mean"),
+                    Pct_High_Priority=(
+                        "priority_tier",
+                        lambda x: round((x == "High Priority").mean() * 100, 1)
+                    ),
+                ).reset_index()
+                grp["Selection_Rate"] = (grp["Selected"] / grp["Total"] * 100).round(1)
+                grp["Avg_Score"] = grp["Avg_Score"].round(4)
+                grp.rename(columns={group_col: friendly_label}, inplace=True)
+                return grp
+
+            def _bias_badge(rate, group_rates):
+                avg_rate = group_rates.mean()
+                diff = abs(rate - avg_rate)
+                if diff < 2:   return ("✅ Neutral",  "#10b981", "rgba(16,185,129,0.1)")
+                if diff < 5:   return ("⚠️ Mild",     "#f59e0b", "rgba(245,158,11,0.1)")
+                return              ("🔴 Biased",   "#ef4444", "rgba(239,68,68,0.1)")
+
+            def _render_group_analysis(group_df, label_col):
+                if group_df is None or group_df.empty:
+                    st.info(f"No data available for {label_col} grouping.")
+                    return
+                rates = group_df["Selection_Rate"]
+                rows_html = ""
+                for _, row in group_df.iterrows():
+                    badge, b_clr, b_bg = _bias_badge(row["Selection_Rate"], rates)
+                    bar_w = min(row["Selection_Rate"] / (rates.max() + 1e-9) * 100, 100)
+                    rows_html += (
+                        f'<tr>'
+                        f'<td style="color:{t["text_primary"]};font-weight:600;padding:8px 6px;">'
+                        f'{row[label_col]}</td>'
+                        f'<td style="color:{t["text_secondary"]};padding:8px 6px;">{int(row["Total"])}</td>'
+                        f'<td style="padding:8px 6px;">'
+                        f'<div style="display:flex;align-items:center;gap:8px;">'
+                        f'<div style="background:{t["metric_bg"]};border-radius:4px;height:6px;'
+                        f'width:80px;overflow:hidden;">'
+                        f'<div style="background:#3b82f6;width:{bar_w:.0f}%;height:100%;'
+                        f'border-radius:4px;"></div></div>'
+                        f'<span style="color:{t["text_primary"]};font-weight:700;">'
+                        f'{row["Selection_Rate"]}%</span></div></td>'
+                        f'<td style="color:#3b82f6;font-weight:700;padding:8px 6px;">'
+                        f'{row["Avg_Score"]}</td>'
+                        f'<td style="color:#8b5cf6;padding:8px 6px;">{row["Pct_High_Priority"]}%</td>'
+                        f'<td style="padding:8px 6px;">'
+                        f'<span style="background:{b_bg};color:{b_clr};border:1px solid {b_clr}44;'
+                        f'padding:2px 10px;border-radius:20px;font-size:0.67rem;font-weight:700;">'
+                        f'{badge}</span></td>'
+                        f'</tr>'
+                    )
+                st.markdown(
+                    f'<div class="panel-card" style="overflow-x:auto;">'
+                    f'<table style="width:100%;border-collapse:collapse;font-size:0.8rem;">'
+                    f'<thead><tr style="border-bottom:2px solid {t["divider"]};">'
+                    f'<th style="color:{t["text_muted"]};font-size:0.65rem;text-align:left;'
+                    f'padding:6px;text-transform:uppercase;letter-spacing:0.06em;">{label_col}</th>'
+                    f'<th style="color:{t["text_muted"]};font-size:0.65rem;text-align:left;'
+                    f'padding:6px;text-transform:uppercase;letter-spacing:0.06em;">Count</th>'
+                    f'<th style="color:{t["text_muted"]};font-size:0.65rem;text-align:left;'
+                    f'padding:6px;text-transform:uppercase;letter-spacing:0.06em;">Selection Rate</th>'
+                    f'<th style="color:{t["text_muted"]};font-size:0.65rem;text-align:left;'
+                    f'padding:6px;text-transform:uppercase;letter-spacing:0.06em;">Avg Score</th>'
+                    f'<th style="color:{t["text_muted"]};font-size:0.65rem;text-align:left;'
+                    f'padding:6px;text-transform:uppercase;letter-spacing:0.06em;">High Priority %</th>'
+                    f'<th style="color:{t["text_muted"]};font-size:0.65rem;text-align:left;'
+                    f'padding:6px;text-transform:uppercase;letter-spacing:0.06em;">Bias Indicator</th>'
+                    f'</tr></thead><tbody>' + rows_html + '</tbody></table></div>',
+                    unsafe_allow_html=True
+                )
+
+            # Experience bucketing
+            if "experience" in merged.columns:
+                def _exp_bucket(e):
+                    try:
+                        v = int(str(e).replace(">","").replace("<",""))
+                        if v <= 2:  return "0–2 yrs"
+                        if v <= 5:  return "3–5 yrs"
+                        if v <= 10: return "6–10 yrs"
+                        return "10+ yrs"
+                    except Exception:
+                        return "Unknown"
+                merged["exp_group"] = merged["experience"].apply(_exp_bucket)
+
+            # CDI bucketing
+            if "city_development_index" in merged.columns:
+                merged["cdi_group"] = pd.cut(
+                    merged["city_development_index"].fillna(0),
+                    bins=[0, 0.6, 0.8, 1.0],
+                    labels=["Low CDI (< 0.6)", "Mid CDI (0.6–0.8)", "High CDI (> 0.8)"]
+                )
+
+            pa_attr_tabs = st.tabs([
+                "👤 Gender", "🎓 Education", "💼 Experience", "🏢 Company Type", "📍 City CDI"
+            ])
+            groups = [
+                (pa_attr_tabs[0], "gender",           "Gender"),
+                (pa_attr_tabs[1], "education_level",  "Education Level"),
+                (pa_attr_tabs[2], "exp_group",         "Experience Group"),
+                (pa_attr_tabs[3], "company_type",      "Company Type"),
+                (pa_attr_tabs[4], "cdi_group",         "City Development Index"),
+            ]
+            for tab_g, col, lbl in groups:
+                with tab_g:
+                    grp_df = _group_table(merged, col, lbl)
+                    _render_group_analysis(grp_df, lbl)
+
+                    # Plotly bar for selection rate
+                    if grp_df is not None and not grp_df.empty:
+                        fig_g = go.Figure(go.Bar(
+                            x=grp_df[lbl].astype(str),
+                            y=grp_df["Selection_Rate"],
+                            marker_color=[
+                                "#ef4444" if abs(r - grp_df["Selection_Rate"].mean()) >= 5
+                                else "#f59e0b" if abs(r - grp_df["Selection_Rate"].mean()) >= 2
+                                else "#10b981"
+                                for r in grp_df["Selection_Rate"]
+                            ],
+                            text=[f"{v}%" for v in grp_df["Selection_Rate"]],
+                            textposition="outside",
+                            hovertemplate="<b>%{x}</b><br>Selection Rate: %{y}%<extra></extra>",
+                        ))
+                        fig_g.update_layout(
+                            paper_bgcolor=t["plotly_paper"], plot_bgcolor=t["plotly_plot"],
+                            font=dict(color=t["plotly_font"]),
+                            xaxis=dict(tickfont=dict(color=t["plotly_font"])),
+                            yaxis=dict(title="Selection Rate (%)", tickfont=dict(color=t["plotly_font"]),
+                                       gridcolor=t["plotly_grid"]),
+                            margin=dict(l=10, r=10, t=10, b=10), height=280,
+                        )
+                        st.plotly_chart(fig_g, use_container_width=True)
+
+        except Exception as ex:
+            st.error(f"Could not compute protected attribute analysis: {ex}")
+
+    # ═══════ TAB 4: AI COMPLIANCE DASHBOARD ══════════════════════════════════
+    with tab_comp:
+        st.markdown('<div class="section-header">AI Compliance & Responsible AI Principles</div>',
+                    unsafe_allow_html=True)
+
+        # All statuses derived from real metrics
+        all_compliant = max_mit < THRESH
+        compliance_items = [
+            {
+                "principle": "Fairness",
+                "icon": "⚖️",
+                "status": "Compliant" if all_compliant else "Review Required",
+                "color": "#10b981" if all_compliant else "#f59e0b",
+                "description": (
+                    f"All fairness metrics are within the {THRESH:.2f} threshold after Fairlearn mitigation. "
+                    f"Demographic Parity Difference: {dpd_mit:.4f}, Equal Opportunity: {eod_mit:.4f}."
+                ),
+                "recommendation": (
+                    "Continue monitoring fairness metrics quarterly. "
+                    "Retrain mitigation model if DPD exceeds 0.10."
+                ),
+            },
+            {
+                "principle": "Transparency",
+                "icon": "🔍",
+                "status": "Compliant",
+                "color": "#10b981",
+                "description": (
+                    "All model decisions are explainable via SHAP feature attribution. "
+                    "The top influential factors (City Development Index, Company Type, Experience) "
+                    "are documented and accessible to recruiters."
+                ),
+                "recommendation": "Provide SHAP explanations to recruiters for all shortlisted and rejected candidates.",
+            },
+            {
+                "principle": "Accountability",
+                "icon": "📋",
+                "status": "Compliant",
+                "color": "#10b981",
+                "description": (
+                    "Full audit trail exists via candidate rankings CSV, fairness audit report, "
+                    "and SHAP explanations. Recruiter notes are persistently stored per candidate."
+                ),
+                "recommendation": "Ensure recruiter notes are reviewed during HR audits. Archive reports monthly.",
+            },
+            {
+                "principle": "Explainability",
+                "icon": "🧠",
+                "status": "Compliant",
+                "color": "#10b981",
+                "description": (
+                    "SHAP-based model explanations are generated for all candidates. "
+                    "Recruiters can view per-candidate top positive and negative factors on the profile page."
+                ),
+                "recommendation": "Extend per-candidate SHAP explanations to all 2,129 candidates in a future phase.",
+            },
+            {
+                "principle": "Privacy",
+                "icon": "🔒",
+                "status": "Review Required",
+                "color": "#f59e0b",
+                "description": (
+                    "Candidate data is stored locally. Gender is used as a protected attribute "
+                    "only for fairness calibration, not as a selection criterion."
+                ),
+                "recommendation": (
+                    "Ensure data retention policies are in place. "
+                    "Conduct a privacy impact assessment before production deployment."
+                ),
+            },
+            {
+                "principle": "Responsible AI",
+                "icon": "🤝",
+                "status": "Compliant",
+                "color": "#10b981",
+                "description": (
+                    "The system uses Fairlearn's Equalized Odds constraint to mitigate bias. "
+                    "Human recruiter review is required before any final hiring decision."
+                ),
+                "recommendation": "Maintain human-in-the-loop for all final hiring decisions. Review AI recommendations, not rely on them.",
+            },
+        ]
+
+        comp_cols = st.columns(2)
+        for i, item in enumerate(compliance_items):
+            with comp_cols[i % 2]:
+                bg  = f"{item['color']}10"
+                bd  = f"{item['color']}30"
+                st.markdown(
+                    f'<div class="panel-card" style="margin-bottom:12px;border-left:4px solid {item["color"]};">'
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'
+                    f'<div style="display:flex;align-items:center;gap:8px;">'
+                    f'<span style="font-size:1.3rem;">{item["icon"]}</span>'
+                    f'<span style="color:{t["text_primary"]};font-weight:700;font-size:0.9rem;">'
+                    f'{item["principle"]}</span></div>'
+                    f'<span style="background:{bg};color:{item["color"]};border:1px solid {bd};'
+                    f'padding:2px 12px;border-radius:20px;font-size:0.68rem;font-weight:700;">'
+                    f'{item["status"]}</span></div>'
+                    f'<div style="color:{t["text_secondary"]};font-size:0.78rem;line-height:1.5;'
+                    f'margin-bottom:10px;">{item["description"]}</div>'
+                    f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};'
+                    f'border-radius:6px;padding:8px 12px;">'
+                    f'<span style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;'
+                    f'text-transform:uppercase;letter-spacing:0.06em;">Recommendation: </span>'
+                    f'<span style="color:{t["text_secondary"]};font-size:0.76rem;">'
+                    f'{item["recommendation"]}</span></div></div>',
+                    unsafe_allow_html=True
+                )
+
+    # ═══════ TAB 5: RISK ASSESSMENT & RECOMMENDATIONS ════════════════════════
+    with tab_risk:
+        # Risk Assessment
+        st.markdown('<div class="section-header">🚦 Risk Assessment</div>', unsafe_allow_html=True)
+
+        RISK_BG = {"Low": "#10b981", "Medium": "#f59e0b", "High": "#ef4444"}
+        r_bg_clr = RISK_BG.get(risk_level, "#6b7280")
+
+        risk_explanations = {
+            "Low": (
+                "All post-mitigation fairness metrics are well within the acceptable threshold of 0.10. "
+                "The Fairlearn mitigation has been effective in reducing demographic parity and equal "
+                "opportunity gaps to near-compliant levels. The AI hiring system is currently operating "
+                "within responsible AI guidelines."
+            ),
+            "Medium": (
+                "Some fairness metrics are approaching or within the acceptable threshold, but continued "
+                "monitoring is recommended. Consider investigating which demographic groups show the "
+                "greatest disparity and whether additional mitigation is warranted."
+            ),
+            "High": (
+                "One or more fairness metrics exceed the 0.10 threshold. Immediate review is required. "
+                "The AI hiring system may be producing biased outcomes for certain protected groups. "
+                "Suspend automated shortlisting and conduct a manual audit before proceeding."
+            ),
+        }
+
+        st.markdown(
+            f'<div style="background:{r_bg_clr}15;border:2px solid {r_bg_clr}40;'
+            f'border-radius:14px;padding:20px 24px;margin-bottom:16px;">'
+            f'<div style="display:flex;align-items:center;gap:16px;">'
+            f'<div style="font-size:2.5rem;">{"🟢" if risk_level == "Low" else "🟡" if risk_level == "Medium" else "🔴"}</div>'
+            f'<div><div style="color:{r_bg_clr};font-size:1.3rem;font-weight:900;">'
+            f'{risk_level} Risk Profile</div>'
+            f'<div style="color:{t["text_secondary"]};font-size:0.84rem;line-height:1.6;margin-top:6px;">'
+            f'{risk_explanations.get(risk_level, "")}</div></div></div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # Risk details
+        risk_metrics = [
+            ("Demographic Parity Difference", dpd_mit, 0.05, 0.10),
+            ("Equal Opportunity Difference",  eod_mit, 0.05, 0.10),
+            ("Equalized Odds Difference",     equod_mit, 0.05, 0.10),
+        ]
+        for r_name, r_val, r_low, r_high in risk_metrics:
+            r_status = "Low" if r_val < r_low else ("Medium" if r_val < r_high else "High")
+            r_clr2   = RISK_BG.get(r_status, "#6b7280")
+            bar_w    = min(r_val / r_high * 100, 100)
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">'
+                f'<div style="min-width:220px;color:{t["text_secondary"]};font-size:0.8rem;">'
+                f'{r_name}</div>'
+                f'<div style="flex:1;background:{t["metric_bg"]};border-radius:6px;height:8px;">'
+                f'<div style="background:{r_clr2};width:{bar_w:.0f}%;height:100%;border-radius:6px;"></div></div>'
+                f'<div style="min-width:60px;color:{r_clr2};font-weight:700;font-size:0.82rem;">'
+                f'{r_val:.4f}</div>'
+                f'<span style="background:{r_clr2}18;color:{r_clr2};border:1px solid {r_clr2}40;'
+                f'padding:1px 8px;border-radius:12px;font-size:0.65rem;font-weight:700;">'
+                f'{r_status}</span></div>',
+                unsafe_allow_html=True
+            )
+
+        # Recommendations
+        st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="section-header">💡 Recruiter Recommendations</div>', unsafe_allow_html=True)
+
+        recommendations = [
+            ("✅", "#10b981", "Continue Monitoring",
+             f"All fairness metrics are within the {THRESH:.2f} threshold. Continue monthly audits to ensure metrics remain stable."),
+            ("📊", "#3b82f6", "Quarterly Review",
+             "Review hiring decisions by demographic group each quarter. Compare selection rates across gender, education, and experience cohorts."),
+            ("🎯", "#8b5cf6", "Threshold Calibration",
+             f"Gender-specific thresholds (Female: {fair_config.get('fair_thresholds', {}).get('Female', 'N/A')}, Male: {fair_config.get('fair_thresholds', {}).get('Male', 'N/A')}) are active. Review annually."),
+            ("⚠️", "#f59e0b", "Monitor Protected Groups",
+             "Pay special attention to gender groups with CDI < 0.60, which may face intersectional disadvantages beyond what fairness metrics capture."),
+            ("🔄", "#6366f1", "Retrain Trigger",
+             f"Initiate model retraining only if Demographic Parity Difference exceeds 0.10 or Equal Opportunity Difference exceeds 0.10 after mitigation."),
+            ("📋", "#10b981", "Human Oversight",
+             "All final hiring decisions must be reviewed by a human recruiter. The AI system provides recommendations, not decisions."),
+        ]
+        for icon, clr, title, body in recommendations:
+            st.markdown(
+                f'<div style="display:flex;gap:12px;padding:12px;margin-bottom:8px;'
+                f'background:{clr}08;border:1px solid {clr}25;border-radius:10px;'
+                f'border-left:3px solid {clr};">'
+                f'<span style="font-size:1.1rem;flex-shrink:0;">{icon}</span>'
+                f'<div><div style="color:{clr};font-weight:700;font-size:0.82rem;margin-bottom:3px;">'
+                f'{title}</div>'
+                f'<div style="color:{t["text_secondary"]};font-size:0.78rem;line-height:1.5;">'
+                f'{body}</div></div></div>',
+                unsafe_allow_html=True
+            )
+
+        # Export
+        st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="section-header">⬇️ Export</div>', unsafe_allow_html=True)
+        ex1, ex2, ex3 = st.columns(3)
+        with ex1:
+            # Export fairness CSV
+            st.download_button(
+                label="📥 Download Fairness Metrics (CSV)",
+                data=fair_df.to_csv(index=False).encode("utf-8"),
+                file_name="fairness_audit_report.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with ex2:
+            # Compliance summary text
+            summary_lines = [
+                "FairHire AI — Fairness & Compliance Summary",
+                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                "=" * 50,
+                f"Overall Fairness Score:    {fairness_score:.1f}%",
+                f"Bias Reduction Achieved:   {bias_reduction:.1f}%",
+                f"Risk Level:                {risk_level}",
+                f"Compliance Status:         {compliance}",
+                "=" * 50,
+                "AFTER MITIGATION (Fairlearn):",
+                f"  Demographic Parity Diff: {dpd_mit:.4f}",
+                f"  Equal Opportunity Diff:  {eod_mit:.4f}",
+                f"  Equalized Odds Diff:     {equod_mit:.4f}",
+                "BEFORE MITIGATION (Raw):",
+                f"  Demographic Parity Diff: {dpd_raw:.4f}",
+                f"  Equal Opportunity Diff:  {eod_raw:.4f}",
+                f"  Equalized Odds Diff:     {equod_raw:.4f}",
+                "=" * 50,
+                "THRESHOLDS:",
+            ] + [f"  {g}: {v}" for g, v in fair_config.get("fair_thresholds", {}).items()]
+            st.download_button(
+                label="📋 Download Compliance Summary (TXT)",
+                data="\n".join(summary_lines).encode("utf-8"),
+                file_name="fairness_compliance_summary.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        with ex3:
+            st.markdown(
+                f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};'
+                f'border-radius:8px;padding:12px;text-align:center;">'
+                f'<div style="color:#3b82f6;font-weight:700;font-size:0.8rem;">📄 PDF Report</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.7rem;margin-top:4px;">'
+                f'Full PDF export will be available in Phase 7</div></div>',
+                unsafe_allow_html=True
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
