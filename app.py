@@ -636,64 +636,338 @@ def render_home_page():
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE 2: CANDIDATE RANKING  (unchanged logic)
 # ─────────────────────────────────────────────────────────────────────────────
-def render_ranking_page():
-    st.header("🎯 Candidate Shortlisting & Probability Ranking Dashboard")
-    st.caption("Rank candidates in the test cohort by predicted job change suitability and priority recruitment tiers.")
+def _build_ranking_df() -> pd.DataFrame:
+    """
+    Join candidate_rankings.csv with aug_test.csv on enrollee_id to produce
+    a recruiter-friendly enriched table. Pure data join — no ML logic touched.
+    Cached separately so filters don't re-read files on every widget interaction.
+    """
+    rankings = load_csv_report(os.path.join("reports", "metrics", "candidate_rankings.csv"))
+    raw      = load_csv_report(os.path.join("data", "raw", "aug_test.csv"))
 
-    rankings_path = os.path.join("reports", "metrics", "candidate_rankings.csv")
-    df = load_csv_report(rankings_path)
+    if rankings.empty:
+        return rankings
+
+    if not raw.empty:
+        merged = rankings.merge(raw, on="enrollee_id", how="left")
+    else:
+        merged = rankings.copy()
+
+    # ── Friendly column names ───────────────────────────────────────────────
+    col_map = {
+        "enrollee_id":            "Candidate ID",
+        "prediction_probability": "Suitability Score",
+        "predicted_class":        "Shortlisted",
+        "percentile_rank":        "Percentile",
+        "priority_tier":          "Priority Tier",
+        "gender":                 "Gender",
+        "experience":             "Experience",
+        "education_level":        "Education",
+        "major_discipline":       "Major",
+        "company_type":           "Company Type",
+        "company_size":           "Company Size",
+        "city_development_index": "City CDI",
+        "training_hours":         "Training Hours",
+        "relevent_experience":    "Relevant Exp",
+    }
+    merged = merged.rename(columns={k: v for k, v in col_map.items() if k in merged.columns})
+
+    # ── Recommendation label from tier + score ──────────────────────────────
+    def _recommend(row):
+        tier  = row.get("Priority Tier", "")
+        score = row.get("Suitability Score", 0)
+        if tier == "High Priority":
+            return "⚡ Immediate Interview"
+        elif tier == "Qualified":
+            return "✅ Schedule Interview"
+        elif tier == "Extended":
+            return "📋 Keep in Pipeline"
+        else:
+            return "🔄 Future Consideration"
+
+    merged["Recommendation"] = merged.apply(_recommend, axis=1)
+
+    # ── Clean up experience values ──────────────────────────────────────────
+    if "Experience" in merged.columns:
+        merged["Experience"] = merged["Experience"].fillna("Unknown").astype(str)
+    if "Education" in merged.columns:
+        merged["Education"] = merged["Education"].fillna("Unknown")
+    if "Gender" in merged.columns:
+        merged["Gender"] = merged["Gender"].fillna("Unknown")
+    if "Company Type" in merged.columns:
+        merged["Company Type"] = merged["Company Type"].fillna("Unknown")
+
+    return merged
+
+
+def render_ranking_page():
+    t = ThemeManager.get()
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:14px;padding:20px 26px;margin-bottom:20px;position:relative;overflow:hidden;">'
+        f'<div style="position:absolute;top:0;left:0;right:0;height:3px;'
+        f'background:linear-gradient(90deg,#3b82f6,#8b5cf6,#10b981);"></div>'
+        f'<div style="color:{t["header_title"]};font-size:1.3rem;font-weight:800;margin-bottom:4px;">'
+        f'📋 Candidate Rankings</div>'
+        f'<div style="color:{t["header_sub"]};font-size:0.85rem;">'
+        f'Recruiter-friendly view of all evaluated candidates with profile details, '
+        f'suitability scores, and hiring recommendations.</div></div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Load enriched data ────────────────────────────────────────────────────
+    df = _build_ranking_df()
 
     if df.empty:
-        st.error(f"Ranking report file missing at `{rankings_path}`. Please run `python run_ranking.py` first.")
+        st.error("Rankings data missing. Please run `python run_ranking.py` first.")
         return
 
-    total_candidates = len(df)
-    high_prio = len(df[df["priority_tier"] == "High Priority"])
-    qualified = len(df[df["priority_tier"] == "Qualified"])
-    extended  = len(df[df["priority_tier"] == "Extended"])
+    total = len(df)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Candidates Evaluated", f"{total_candidates:,}")
-    c2.metric("High Priority (Top 10%)", f"{high_prio:,}")
-    c3.metric("Qualified Pool (Top 25%)", f"{qualified:,}")
-    c4.metric("Extended Pool (Top 50%)", f"{extended:,}")
+    # ── KPI cards ─────────────────────────────────────────────────────────────
+    k1, k2, k3, k4, k5 = st.columns(5)
+    tier_counts = df["Priority Tier"].value_counts()
 
-    st.markdown("---")
+    kpis = [
+        (k1, "blue",   "👥", "Total Evaluated",    f"{total:,}",                                        "All candidates"),
+        (k2, "red",    "🔥", "High Priority",       f"{tier_counts.get('High Priority', 0):,}",         "Top 10%"),
+        (k3, "teal",   "🎓", "Qualified",           f"{tier_counts.get('Qualified', 0):,}",             "Top 25%"),
+        (k4, "amber",  "📋", "Extended",            f"{tier_counts.get('Extended', 0):,}",              "Top 50%"),
+        (k5, "green",  "✅", "Shortlisted",         f"{int(df['Shortlisted'].sum()):,}",                "Model flag = 1"),
+    ]
+    for col, color, icon, label, value, sub in kpis:
+        with col:
+            st.markdown(
+                f'<div class="kpi-card {color}">'
+                f'<div class="kpi-icon">{icon}</div>'
+                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-value {color}">{value}</div>'
+                f'<div class="kpi-sub">{sub}</div></div>',
+                unsafe_allow_html=True
+            )
 
-    col_filter1, col_filter2 = st.columns([2, 2])
-    with col_filter1:
-        search_id = st.text_input("🔍 Search by Candidate Enrollee ID:", placeholder="e.g. 22527")
-    with col_filter2:
-        selected_tiers = st.multiselect(
-            "Filter by Priority Tier:",
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+
+    # ── Score distribution chart ──────────────────────────────────────────────
+    with st.expander("📊 Suitability Score Distribution", expanded=False):
+        fig_dist = go.Figure()
+        tier_colors_map = {
+            "High Priority": "#ef4444",
+            "Qualified":     "#10b981",
+            "Extended":      "#f59e0b",
+            "Reserve":       "#6b7280",
+        }
+        for tier, clr in tier_colors_map.items():
+            subset = df[df["Priority Tier"] == tier]["Suitability Score"]
+            if len(subset) > 0:
+                fig_dist.add_trace(go.Histogram(
+                    x=subset, name=tier, marker_color=clr,
+                    opacity=0.75, nbinsx=40,
+                    hovertemplate=f"<b>{tier}</b><br>Score: %{{x:.3f}}<br>Count: %{{y}}<extra></extra>"
+                ))
+        fig_dist.update_layout(
+            barmode="overlay",
+            paper_bgcolor=t["plotly_paper"], plot_bgcolor=t["plotly_plot"],
+            font=dict(family="Inter", color=t["plotly_font"]),
+            xaxis=dict(title="Suitability Score", gridcolor=t["plotly_grid"],
+                       tickfont=dict(color=t["plotly_font"])),
+            yaxis=dict(title="Number of Candidates", gridcolor=t["plotly_grid"],
+                       tickfont=dict(color=t["plotly_tick"])),
+            legend=dict(bgcolor=t["plotly_paper"], bordercolor=t["card_border"],
+                        font=dict(color=t["plotly_font"])),
+            margin=dict(l=10, r=10, t=20, b=10), height=280,
+        )
+        st.plotly_chart(fig_dist, use_container_width=True)
+
+    st.markdown(f"<hr style='border-color:{t['divider']};margin:4px 0 16px 0;'>", unsafe_allow_html=True)
+
+    # ── Filters ───────────────────────────────────────────────────────────────
+    st.markdown(f'<div class="section-header">🔎 Search & Filters</div>', unsafe_allow_html=True)
+
+    fa, fb, fc = st.columns([2, 2, 2])
+    with fa:
+        search_id = st.text_input("🔍 Search Candidate ID", placeholder="e.g. 22527", label_visibility="collapsed")
+    with fb:
+        sel_tiers = st.multiselect(
+            "Priority Tier", label_visibility="collapsed",
             options=["High Priority", "Qualified", "Extended", "Reserve"],
-            default=["High Priority", "Qualified"]
+            default=["High Priority", "Qualified", "Extended", "Reserve"],
+            placeholder="Filter by Priority Tier…"
+        )
+    with fc:
+        sel_shortlist = st.selectbox(
+            "Shortlist Status", label_visibility="collapsed",
+            options=["All Candidates", "Shortlisted Only", "Not Shortlisted"],
         )
 
-    filtered_df = df.copy()
-    if selected_tiers:
-        filtered_df = filtered_df[filtered_df["priority_tier"].isin(selected_tiers)]
-    if search_id.strip():
-        filtered_df = filtered_df[filtered_df["enrollee_id"].astype(str).str.contains(search_id.strip())]
+    fd, fe, ff = st.columns([2, 2, 2])
+    with fd:
+        edu_options = ["All Education"] + (
+            sorted(df["Education"].dropna().unique().tolist()) if "Education" in df.columns else []
+        )
+        sel_edu = st.selectbox("Education", options=edu_options, label_visibility="collapsed")
+    with fe:
+        gender_opts = ["All Genders"] + (
+            sorted(df["Gender"].dropna().unique().tolist()) if "Gender" in df.columns else []
+        )
+        sel_gender = st.selectbox("Gender", options=gender_opts, label_visibility="collapsed")
+    with ff:
+        sort_options = {
+            "Score ↓ (Highest First)":    ("Suitability Score", False),
+            "Score ↑ (Lowest First)":     ("Suitability Score", True),
+            "Percentile ↓":               ("Percentile", False),
+            "Candidate ID ↑":             ("Candidate ID", True),
+        }
+        sel_sort = st.selectbox("Sort by", options=list(sort_options.keys()), label_visibility="collapsed")
 
-    st.markdown(f"**Displaying {len(filtered_df):,} out of {total_candidates:,} candidates**")
+    # ── Apply filters ─────────────────────────────────────────────────────────
+    fdf = df.copy()
+
+    if search_id.strip():
+        fdf = fdf[fdf["Candidate ID"].astype(str).str.contains(search_id.strip())]
+    if sel_tiers:
+        fdf = fdf[fdf["Priority Tier"].isin(sel_tiers)]
+    if sel_shortlist == "Shortlisted Only":
+        fdf = fdf[fdf["Shortlisted"] == 1]
+    elif sel_shortlist == "Not Shortlisted":
+        fdf = fdf[fdf["Shortlisted"] == 0]
+    if sel_edu != "All Education" and "Education" in fdf.columns:
+        fdf = fdf[fdf["Education"] == sel_edu]
+    if sel_gender != "All Genders" and "Gender" in fdf.columns:
+        fdf = fdf[fdf["Gender"] == sel_gender]
+
+    sort_col, sort_asc = sort_options[sel_sort]
+    if sort_col in fdf.columns:
+        fdf = fdf.sort_values(sort_col, ascending=sort_asc)
+
+    st.markdown(f"<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+
+    # ── Pagination ────────────────────────────────────────────────────────────
+    PAGE_SIZE = 25
+    total_filtered = len(fdf)
+    total_pages    = max(1, (total_filtered + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    pg_col1, pg_col2, pg_col3 = st.columns([3, 1, 1])
+    with pg_col1:
+        st.markdown(
+            f'<div style="color:{t["text_secondary"]};font-size:0.85rem;padding-top:6px;">'
+            f'Showing <strong style="color:{t["text_primary"]};">{total_filtered:,}</strong> '
+            f'of <strong style="color:{t["text_primary"]};">{total:,}</strong> candidates</div>',
+            unsafe_allow_html=True
+        )
+    with pg_col2:
+        page_num = st.number_input(
+            "Page", min_value=1, max_value=total_pages, value=1,
+            step=1, label_visibility="collapsed", key="ranking_page_num"
+        )
+    with pg_col3:
+        st.markdown(
+            f'<div style="color:{t["text_muted"]};font-size:0.8rem;padding-top:8px;text-align:right;">'
+            f'Page {page_num} / {total_pages}</div>',
+            unsafe_allow_html=True
+        )
+
+    start = (page_num - 1) * PAGE_SIZE
+    page_df = fdf.iloc[start : start + PAGE_SIZE].copy()
+
+    # ── Tier badge colour map ─────────────────────────────────────────────────
+    TIER_COLORS = {
+        "High Priority": ("#ef4444", "rgba(239,68,68,0.1)",   "rgba(239,68,68,0.25)"),
+        "Qualified":     ("#10b981", "rgba(16,185,129,0.1)",  "rgba(16,185,129,0.25)"),
+        "Extended":      ("#f59e0b", "rgba(245,158,11,0.1)",  "rgba(245,158,11,0.25)"),
+        "Reserve":       ("#6b7280", "rgba(107,114,128,0.1)", "rgba(107,114,128,0.25)"),
+    }
+    RECO_COLORS = {
+        "⚡ Immediate Interview":    "#ef4444",
+        "✅ Schedule Interview":     "#10b981",
+        "📋 Keep in Pipeline":       "#f59e0b",
+        "🔄 Future Consideration":   "#6b7280",
+    }
+
+    # ── Candidate table ───────────────────────────────────────────────────────
+    st.markdown(f'<div class="section-header">👤 Candidate Profiles</div>', unsafe_allow_html=True)
+
+    # Build display columns list
+    display_cols_ordered = [
+        "Candidate ID", "Gender", "Experience", "Education", "Major",
+        "Company Type", "Training Hours", "City CDI",
+        "Suitability Score", "Percentile", "Priority Tier",
+        "Shortlisted", "Recommendation"
+    ]
+    show_cols = [c for c in display_cols_ordered if c in page_df.columns]
+
+    col_config = {}
+    if "Candidate ID" in show_cols:
+        col_config["Candidate ID"] = st.column_config.NumberColumn("Candidate ID", format="%d")
+    if "Suitability Score" in show_cols:
+        col_config["Suitability Score"] = st.column_config.ProgressColumn(
+            "Suitability Score", format="%.4f", min_value=0.0, max_value=1.0)
+    if "Percentile" in show_cols:
+        col_config["Percentile"] = st.column_config.NumberColumn("Percentile", format="%.1f%%")
+    if "Shortlisted" in show_cols:
+        col_config["Shortlisted"] = st.column_config.CheckboxColumn("Shortlisted")
+    if "City CDI" in show_cols:
+        col_config["City CDI"] = st.column_config.NumberColumn("City CDI", format="%.3f")
+    if "Training Hours" in show_cols:
+        col_config["Training Hours"] = st.column_config.NumberColumn("Training Hours", format="%d hrs")
+
     st.dataframe(
-        filtered_df,
-        column_config={
-            "enrollee_id": st.column_config.NumberColumn("Candidate ID", format="%d"),
-            "prediction_probability": st.column_config.ProgressColumn(
-                "Suitability Score", format="%.4f", min_value=0.0, max_value=1.0),
-            "predicted_class": st.column_config.NumberColumn("Shortlist Flag", format="%d"),
-            "percentile_rank": st.column_config.NumberColumn("Top Percentile", format="%.2f%%"),
-            "priority_tier": "Priority Tier"
-        },
-        use_container_width=True, height=450
+        page_df[show_cols].reset_index(drop=True),
+        column_config=col_config,
+        use_container_width=True,
+        height=min(600, 56 + len(page_df) * 35),
+        hide_index=True,
     )
-    csv_data = filtered_df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="📥 Download Filtered Candidate Shortlist (CSV)",
-        data=csv_data, file_name="candidate_shortlist_export.csv", mime="text/csv"
-    )
+
+    # ── Tier legend ───────────────────────────────────────────────────────────
+    legend_html = f'<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;">'
+    for tier, (clr, bg, bd) in TIER_COLORS.items():
+        count = tier_counts.get(tier, 0)
+        legend_html += (
+            f'<span style="background:{bg};color:{clr};border:1px solid {bd};'
+            f'padding:3px 12px;border-radius:20px;font-size:0.72rem;font-weight:600;">'
+            f'{tier} ({count:,})</span>'
+        )
+    legend_html += "</div>"
+    st.markdown(legend_html, unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+
+    # ── Download section ──────────────────────────────────────────────────────
+    st.markdown(f'<div class="section-header">⬇️ Export</div>', unsafe_allow_html=True)
+    dl1, dl2, dl3 = st.columns(3)
+
+    with dl1:
+        csv_full = fdf.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download All Filtered Results",
+            data=csv_full,
+            file_name="candidate_shortlist_filtered.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with dl2:
+        hp_df = df[df["Priority Tier"] == "High Priority"]
+        csv_hp = hp_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="🔥 Download High Priority Only",
+            data=csv_hp,
+            file_name="high_priority_candidates.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with dl3:
+        sl_df = df[df["Shortlisted"] == 1]
+        csv_sl = sl_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="✅ Download Shortlisted Candidates",
+            data=csv_sl,
+            file_name="shortlisted_candidates.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
