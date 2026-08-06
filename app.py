@@ -1261,7 +1261,487 @@ def render_ranking_page():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 3: FAIRNESS DASHBOARD  (unchanged logic, theme-aware matplotlib)
+# PAGE 3: JOB DESCRIPTION MANAGEMENT
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Job store helpers (JSON file — no ML logic) ───────────────────────────────
+_JOBS_PATH = os.path.join("data", "jobs", "jobs.json")
+
+
+def _load_jobs() -> list:
+    """Load all jobs from the JSON store. Returns [] if file missing."""
+    if not os.path.exists(_JOBS_PATH):
+        return []
+    try:
+        with open(_JOBS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f).get("jobs", [])
+    except Exception:
+        return []
+
+
+def _save_jobs(jobs: list) -> None:
+    """Persist jobs list back to the JSON store."""
+    os.makedirs(os.path.dirname(_JOBS_PATH), exist_ok=True)
+    with open(_JOBS_PATH, "w", encoding="utf-8") as f:
+        json.dump({"jobs": jobs}, f, indent=2, ensure_ascii=False)
+
+
+def _next_job_id(jobs: list) -> str:
+    """Auto-generate next sequential JD-NNN ID."""
+    if not jobs:
+        return "JD-001"
+    nums = []
+    for j in jobs:
+        jid = j.get("job_id", "JD-000")
+        try:
+            nums.append(int(jid.split("-")[1]))
+        except (IndexError, ValueError):
+            pass
+    return f"JD-{(max(nums) + 1):03d}" if nums else "JD-001"
+
+
+def _job_form(
+    t: dict,
+    mode: str = "create",
+    existing: dict = None,
+) -> dict | None:
+    """
+    Render a Create / Edit job form using st.form.
+    Returns the submitted job dict, or None if not submitted.
+    mode: 'create' | 'edit'
+    existing: pre-filled values when editing.
+    """
+    e = existing or {}
+    form_key = f"jd_form_{mode}_{e.get('job_id', 'new')}"
+
+    with st.form(form_key, clear_on_submit=(mode == "create")):
+        st.markdown(
+            f'<div style="color:{t["text_primary"]};font-weight:700;font-size:1rem;margin-bottom:16px;">'
+            f'{"✏️ Edit Job Posting" if mode == "edit" else "➕ Create New Job Posting"}</div>',
+            unsafe_allow_html=True
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            title = st.text_input("Job Title *", value=e.get("title", ""), placeholder="e.g. Senior Data Scientist")
+            department = st.text_input("Department *", value=e.get("department", ""), placeholder="e.g. Analytics & AI")
+            employment_type = st.selectbox(
+                "Employment Type *",
+                ["Full-time", "Part-time", "Contract", "Internship", "Freelance"],
+                index=["Full-time", "Part-time", "Contract", "Internship", "Freelance"].index(
+                    e.get("employment_type", "Full-time")
+                ) if e.get("employment_type") in ["Full-time", "Part-time", "Contract", "Internship", "Freelance"] else 0
+            )
+            location = st.text_input("Location *", value=e.get("location", ""), placeholder="e.g. Bangalore, India (Hybrid)")
+            salary_range = st.text_input("Salary Range (optional)", value=e.get("salary_range", ""), placeholder="e.g. 15 - 25 LPA")
+
+        with col2:
+            req_exp = st.selectbox(
+                "Required Experience *",
+                ["<1 year", "1-2 years", "2-4 years", "4-7 years", "7-10 years", "10+ years"],
+                index=["<1 year", "1-2 years", "2-4 years", "4-7 years", "7-10 years", "10+ years"].index(
+                    e.get("required_experience", "2-4 years")
+                ) if e.get("required_experience") in ["<1 year", "1-2 years", "2-4 years", "4-7 years", "7-10 years", "10+ years"] else 2
+            )
+            req_edu = st.selectbox(
+                "Required Education *",
+                ["High School", "Graduate", "Masters", "PhD", "Any"],
+                index=["High School", "Graduate", "Masters", "PhD", "Any"].index(
+                    e.get("required_education", "Graduate")
+                ) if e.get("required_education") in ["High School", "Graduate", "Masters", "PhD", "Any"] else 1
+            )
+            status = st.selectbox(
+                "Status *",
+                ["Open", "Closed"],
+                index=0 if e.get("status", "Open") == "Open" else 1
+            )
+            req_skills_raw = st.text_input(
+                "Required Skills * (comma-separated)",
+                value=", ".join(e.get("required_skills", [])),
+                placeholder="e.g. Python, SQL, Machine Learning"
+            )
+            pref_skills_raw = st.text_input(
+                "Preferred Skills (comma-separated)",
+                value=", ".join(e.get("preferred_skills", [])),
+                placeholder="e.g. TensorFlow, Spark, AWS"
+            )
+
+        description = st.text_area(
+            "Job Description *",
+            value=e.get("description", ""),
+            height=160,
+            placeholder="Describe responsibilities, team, and role expectations..."
+        )
+
+        submitted = st.form_submit_button(
+            "💾 Save Job" if mode == "edit" else "✅ Create Job",
+            use_container_width=True
+        )
+
+    if submitted:
+        if not title.strip() or not department.strip() or not location.strip() or not description.strip():
+            st.error("Please fill in all required fields (marked with *).")
+            return None
+
+        req_skills  = [s.strip() for s in req_skills_raw.split(",") if s.strip()]
+        pref_skills = [s.strip() for s in pref_skills_raw.split(",") if s.strip()]
+        now_str     = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+        return {
+            "job_id":              e.get("job_id", ""),   # filled by caller on create
+            "title":               title.strip(),
+            "department":          department.strip(),
+            "employment_type":     employment_type,
+            "location":            location.strip(),
+            "required_experience": req_exp,
+            "required_education":  req_edu,
+            "required_skills":     req_skills,
+            "preferred_skills":    pref_skills,
+            "description":         description.strip(),
+            "salary_range":        salary_range.strip(),
+            "status":              status,
+            "created_at":          e.get("created_at", now_str),
+            "updated_at":          now_str,
+        }
+    return None
+
+
+def render_job_descriptions_page():
+    t = ThemeManager.get()
+
+    # ── Session-state init ────────────────────────────────────────────────────
+    if "jd_mode"    not in st.session_state: st.session_state["jd_mode"]    = None
+    if "jd_edit_id" not in st.session_state: st.session_state["jd_edit_id"] = None
+    if "jd_confirm_delete" not in st.session_state: st.session_state["jd_confirm_delete"] = None
+
+    jobs = _load_jobs()
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:14px;padding:20px 26px;margin-bottom:20px;position:relative;overflow:hidden;">'
+        f'<div style="position:absolute;top:0;left:0;right:0;height:3px;'
+        f'background:linear-gradient(90deg,#6366f1,#8b5cf6,#ec4899);"></div>'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">'
+        f'<div>'
+        f'<div style="color:{t["header_title"]};font-size:1.3rem;font-weight:800;margin-bottom:4px;">'
+        f'💼 Job Description Management</div>'
+        f'<div style="color:{t["header_sub"]};font-size:0.85rem;">'
+        f'Create, manage, and track all job postings. Designed for candidate matching in future phases.</div>'
+        f'</div></div></div>',
+        unsafe_allow_html=True
+    )
+
+    # ── KPI bar ───────────────────────────────────────────────────────────────
+    total_jobs  = len(jobs)
+    open_jobs   = sum(1 for j in jobs if j.get("status") == "Open")
+    closed_jobs = sum(1 for j in jobs if j.get("status") == "Closed")
+    depts       = len(set(j.get("department", "") for j in jobs))
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    kpis = [
+        (k1, "blue",   "💼", "Total Postings",  str(total_jobs),  "All job records"),
+        (k2, "green",  "✅", "Open Positions",  str(open_jobs),   "Actively hiring"),
+        (k3, "red",    "🔒", "Closed Positions", str(closed_jobs), "No longer accepting"),
+        (k4, "purple", "🏢", "Departments",      str(depts),       "Unique departments"),
+        (k5, "teal",   "📋", "Total Skills",
+         str(sum(len(j.get("required_skills", [])) for j in jobs)), "Required skill tags"),
+    ]
+    for col, color, icon, label, value, sub in kpis:
+        with col:
+            st.markdown(
+                f'<div class="kpi-card {color}">'
+                f'<div class="kpi-icon">{icon}</div>'
+                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-value {color}">{value}</div>'
+                f'<div class="kpi-sub">{sub}</div></div>',
+                unsafe_allow_html=True
+            )
+
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+
+    # ── Search / Filter / Actions row ─────────────────────────────────────────
+    fa, fb, fc, fd = st.columns([3, 2, 2, 2])
+    with fa:
+        search_q = st.text_input("Search jobs", placeholder="Search title, department, skills...",
+                                 label_visibility="collapsed")
+    with fb:
+        filter_status = st.selectbox("Status", ["All", "Open", "Closed"],
+                                     label_visibility="collapsed")
+    with fc:
+        all_depts = sorted(set(j.get("department", "") for j in jobs))
+        filter_dept = st.selectbox("Department", ["All Departments"] + all_depts,
+                                   label_visibility="collapsed")
+    with fd:
+        if st.button("➕ Create New Job", use_container_width=True, key="btn_create_jd"):
+            st.session_state["jd_mode"]    = "create"
+            st.session_state["jd_edit_id"] = None
+            st.rerun()
+
+    # ── CREATE form ───────────────────────────────────────────────────────────
+    if st.session_state["jd_mode"] == "create":
+        st.markdown(f"<hr style='border-color:{t['divider']};margin:8px 0 16px 0;'>", unsafe_allow_html=True)
+        result = _job_form(t, mode="create")
+        if result is not None:
+            jobs = _load_jobs()
+            result["job_id"] = _next_job_id(jobs)
+            jobs.insert(0, result)
+            _save_jobs(jobs)
+            st.success(f"Job **{result['job_id']}** — *{result['title']}* created successfully!")
+            st.session_state["jd_mode"] = None
+            st.rerun()
+        col_cancel, _ = st.columns([1, 4])
+        with col_cancel:
+            if st.button("✖ Cancel", key="cancel_create"):
+                st.session_state["jd_mode"] = None
+                st.rerun()
+        st.markdown(f"<hr style='border-color:{t['divider']};margin:16px 0;'>", unsafe_allow_html=True)
+
+    # ── EDIT form ─────────────────────────────────────────────────────────────
+    if st.session_state["jd_mode"] == "edit" and st.session_state["jd_edit_id"]:
+        edit_id  = st.session_state["jd_edit_id"]
+        edit_job = next((j for j in jobs if j["job_id"] == edit_id), None)
+        if edit_job:
+            st.markdown(f"<hr style='border-color:{t['divider']};margin:8px 0 16px 0;'>", unsafe_allow_html=True)
+            result = _job_form(t, mode="edit", existing=edit_job)
+            if result is not None:
+                jobs = _load_jobs()
+                result["job_id"] = edit_id
+                jobs = [result if j["job_id"] == edit_id else j for j in jobs]
+                _save_jobs(jobs)
+                st.success(f"Job **{edit_id}** updated successfully!")
+                st.session_state["jd_mode"]    = None
+                st.session_state["jd_edit_id"] = None
+                st.rerun()
+            col_cancel, _ = st.columns([1, 4])
+            with col_cancel:
+                if st.button("✖ Cancel", key="cancel_edit"):
+                    st.session_state["jd_mode"]    = None
+                    st.session_state["jd_edit_id"] = None
+                    st.rerun()
+            st.markdown(f"<hr style='border-color:{t['divider']};margin:16px 0;'>", unsafe_allow_html=True)
+
+    # ── Apply search + filters ────────────────────────────────────────────────
+    filtered = jobs
+    if filter_status != "All":
+        filtered = [j for j in filtered if j.get("status") == filter_status]
+    if filter_dept != "All Departments":
+        filtered = [j for j in filtered if j.get("department") == filter_dept]
+    if search_q.strip():
+        q = search_q.strip().lower()
+        filtered = [
+            j for j in filtered
+            if q in j.get("title", "").lower()
+            or q in j.get("department", "").lower()
+            or any(q in s.lower() for s in j.get("required_skills", []))
+            or any(q in s.lower() for s in j.get("preferred_skills", []))
+            or q in j.get("description", "").lower()
+        ]
+
+    # ── Results count ─────────────────────────────────────────────────────────
+    st.markdown('<div class="section-header">📋 Job Postings</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="color:{t["text_secondary"]};font-size:0.84rem;margin-bottom:14px;">'
+        f'Showing <strong style="color:{t["text_primary"]};">{len(filtered)}</strong> of '
+        f'<strong style="color:{t["text_primary"]};">{total_jobs}</strong> job postings</div>',
+        unsafe_allow_html=True
+    )
+
+    if not filtered:
+        st.info("No job postings match your search criteria. Try adjusting the filters or create a new job.")
+        return
+
+    # ── Job Cards (3-column grid) ─────────────────────────────────────────────
+    STATUS_COLORS = {
+        "Open":   ("#10b981", "rgba(16,185,129,0.1)",  "rgba(16,185,129,0.25)"),
+        "Closed": ("#6b7280", "rgba(107,114,128,0.1)", "rgba(107,114,128,0.25)"),
+    }
+    EMP_COLORS = {
+        "Full-time":  "#3b82f6",
+        "Part-time":  "#8b5cf6",
+        "Contract":   "#f59e0b",
+        "Internship": "#10b981",
+        "Freelance":  "#ec4899",
+    }
+
+    CARDS_PER_ROW = 2
+    rows = [filtered[i:i+CARDS_PER_ROW] for i in range(0, len(filtered), CARDS_PER_ROW)]
+
+    for row_jobs in rows:
+        cols = st.columns(CARDS_PER_ROW, gap="medium")
+        for col, job in zip(cols, row_jobs):
+            jid    = job.get("job_id", "")
+            title  = job.get("title", "")
+            dept   = job.get("department", "")
+            etype  = job.get("employment_type", "Full-time")
+            loc    = job.get("location", "")
+            exp    = job.get("required_experience", "")
+            edu    = job.get("required_education", "")
+            skills = job.get("required_skills", [])
+            pskills = job.get("preferred_skills", [])
+            desc   = job.get("description", "")[:180] + ("…" if len(job.get("description", "")) > 180 else "")
+            salary = job.get("salary_range", "")
+            status = job.get("status", "Open")
+            updated = job.get("updated_at", "")[:10]
+
+            s_clr, s_bg, s_bd = STATUS_COLORS.get(status, STATUS_COLORS["Open"])
+            e_clr = EMP_COLORS.get(etype, "#3b82f6")
+
+            # Skill pills (required)
+            skill_pills = "".join(
+                f'<span style="background:rgba(59,130,246,0.1);color:#3b82f6;'
+                f'border:1px solid rgba(59,130,246,0.2);padding:2px 8px;'
+                f'border-radius:12px;font-size:0.66rem;font-weight:600;margin:2px;">{s}</span>'
+                for s in skills[:6]
+            )
+            if len(skills) > 6:
+                skill_pills += (
+                    f'<span style="background:rgba(107,114,128,0.1);color:{t["text_muted"]};'
+                    f'border:1px solid rgba(107,114,128,0.2);padding:2px 8px;'
+                    f'border-radius:12px;font-size:0.66rem;font-weight:600;margin:2px;">+{len(skills)-6} more</span>'
+                )
+
+            with col:
+                st.markdown(
+                    f'<div class="panel-card" style="height:100%;position:relative;">'
+                    # Top stripe by status
+                    f'<div style="position:absolute;top:0;left:0;right:0;height:3px;'
+                    f'border-radius:14px 14px 0 0;background:{s_clr};"></div>'
+                    # Header row: ID + Status badge
+                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start;'
+                    f'margin-bottom:10px;padding-top:4px;">'
+                    f'<span style="color:{t["text_muted"]};font-size:0.68rem;font-weight:700;'
+                    f'letter-spacing:0.08em;">{jid}</span>'
+                    f'<span style="background:{s_bg};color:{s_clr};border:1px solid {s_bd};'
+                    f'padding:2px 10px;border-radius:20px;font-size:0.68rem;font-weight:700;">{status}</span>'
+                    f'</div>'
+                    # Title
+                    f'<div style="color:{t["text_primary"]};font-size:1rem;font-weight:800;'
+                    f'margin-bottom:4px;line-height:1.3;">{title}</div>'
+                    # Dept + Type
+                    f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
+                    f'<span style="color:{t["text_secondary"]};font-size:0.76rem;">🏢 {dept}</span>'
+                    f'<span style="color:{e_clr};font-size:0.72rem;font-weight:600;'
+                    f'background:{e_clr}18;padding:1px 8px;border-radius:10px;">{etype}</span>'
+                    f'</div>'
+                    # Meta row
+                    f'<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;'
+                    f'color:{t["text_muted"]};font-size:0.74rem;">'
+                    f'<span>📍 {loc}</span>'
+                    f'<span>💼 {exp}</span>'
+                    f'<span>🎓 {edu}</span>'
+                    + (f'<span>💰 {salary}</span>' if salary else '') +
+                    f'</div>'
+                    # Description snippet
+                    f'<div style="color:{t["text_secondary"]};font-size:0.79rem;line-height:1.55;'
+                    f'margin-bottom:12px;">{desc}</div>'
+                    # Required skills
+                    f'<div style="margin-bottom:12px;"><div style="color:{t["text_muted"]};'
+                    f'font-size:0.65rem;font-weight:700;text-transform:uppercase;'
+                    f'letter-spacing:0.08em;margin-bottom:5px;">Required Skills</div>'
+                    f'<div style="display:flex;flex-wrap:wrap;gap:2px;">{skill_pills}</div></div>'
+                    # Updated
+                    f'<div style="color:{t["text_hint"]};font-size:0.65rem;margin-top:auto;'
+                    f'padding-top:8px;border-top:1px solid {t["panel_border_l"]};">'
+                    f'Last updated: {updated}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+                # Action buttons
+                ba, bb, bc = st.columns(3)
+                with ba:
+                    if st.button("✏️ Edit", key=f"edit_{jid}", use_container_width=True):
+                        st.session_state["jd_mode"]    = "edit"
+                        st.session_state["jd_edit_id"] = jid
+                        st.session_state["jd_confirm_delete"] = None
+                        st.rerun()
+                with bb:
+                    # Toggle Open/Closed
+                    new_status = "Closed" if status == "Open" else "Open"
+                    btn_label  = "🔒 Close" if status == "Open" else "🟢 Reopen"
+                    if st.button(btn_label, key=f"toggle_{jid}", use_container_width=True):
+                        all_jobs = _load_jobs()
+                        for j in all_jobs:
+                            if j["job_id"] == jid:
+                                j["status"]     = new_status
+                                j["updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+                        _save_jobs(all_jobs)
+                        st.rerun()
+                with bc:
+                    if st.button("🗑️ Delete", key=f"del_{jid}", use_container_width=True):
+                        st.session_state["jd_confirm_delete"] = jid
+
+                # Delete confirmation
+                if st.session_state.get("jd_confirm_delete") == jid:
+                    st.warning(f"Delete **{jid} — {title}**? This cannot be undone.")
+                    cy, cn = st.columns(2)
+                    with cy:
+                        if st.button("Yes, Delete", key=f"confirm_del_{jid}", use_container_width=True):
+                            all_jobs = _load_jobs()
+                            all_jobs = [j for j in all_jobs if j["job_id"] != jid]
+                            _save_jobs(all_jobs)
+                            st.session_state["jd_confirm_delete"] = None
+                            st.rerun()
+                    with cn:
+                        if st.button("Cancel", key=f"cancel_del_{jid}", use_container_width=True):
+                            st.session_state["jd_confirm_delete"] = None
+                            st.rerun()
+
+        st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
+
+    # ── Export ────────────────────────────────────────────────────────────────
+    st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+    st.markdown('<div class="section-header">⬇️ Export</div>', unsafe_allow_html=True)
+    exp_col1, exp_col2, _ = st.columns([2, 2, 3])
+    with exp_col1:
+        if jobs:
+            jobs_df = pd.DataFrame([
+                {k: (", ".join(v) if isinstance(v, list) else v)
+                 for k, v in j.items() if k != "_rec_json"}
+                for j in filtered
+            ])
+            st.download_button(
+                label="📥 Export Filtered Jobs (CSV)",
+                data=jobs_df.to_csv(index=False).encode("utf-8"),
+                file_name="job_postings_export.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+    with exp_col2:
+        if jobs:
+            open_jobs_data = [j for j in jobs if j.get("status") == "Open"]
+            if open_jobs_data:
+                open_df = pd.DataFrame([
+                    {k: (", ".join(v) if isinstance(v, list) else v)
+                     for k, v in j.items() if k != "_rec_json"}
+                    for j in open_jobs_data
+                ])
+                st.download_button(
+                    label="✅ Export Open Jobs Only (CSV)",
+                    data=open_df.to_csv(index=False).encode("utf-8"),
+                    file_name="open_jobs_export.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
+    # ── Future matching hook note ─────────────────────────────────────────────
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};'
+        f'border-radius:10px;padding:14px 18px;">'
+        f'<span style="color:#3b82f6;font-weight:700;font-size:0.82rem;">🔗 Future Phase — Candidate Matching</span>'
+        f'<div style="color:{t["text_secondary"]};font-size:0.78rem;margin-top:6px;line-height:1.6;">'
+        f'In the next phase, each job posting will be matched against the candidate pool using '
+        f'required_skills, required_experience, and required_education from this store. '
+        f'The <code>generate_candidate_recommendation()</code> engine will incorporate JD match scores '
+        f'to produce role-specific recommendations.</div></div>',
+        unsafe_allow_html=True
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE 4: FAIRNESS DASHBOARD  (unchanged logic, theme-aware matplotlib)
 # ─────────────────────────────────────────────────────────────────────────────
 def render_fairness_page():
     t = ThemeManager.get()
@@ -1644,6 +2124,8 @@ def main():
         render_home_page()
     elif "Rankings" in page:
         render_ranking_page()
+    elif "Job" in page and "Description" in page:
+        render_job_descriptions_page()
     elif "Fairness" in page:
         render_fairness_page()
     elif "SHAP" in page:

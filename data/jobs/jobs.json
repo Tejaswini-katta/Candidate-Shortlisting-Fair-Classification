@@ -1,0 +1,52 @@
+{
+  "jobs": [
+    {
+      "job_id": "JD-001",
+      "title": "Senior Data Scientist",
+      "department": "Analytics & AI",
+      "employment_type": "Full-time",
+      "location": "Bangalore, India (Hybrid)",
+      "required_experience": "4-7 years",
+      "required_education": "Masters",
+      "required_skills": ["Python", "Machine Learning", "Statistics", "SQL", "scikit-learn"],
+      "preferred_skills": ["TensorFlow", "PyTorch", "Spark", "AWS", "MLflow"],
+      "description": "We are looking for a Senior Data Scientist to join our Analytics & AI team. You will build and deploy machine learning models that drive key business decisions, work closely with product and engineering teams, and mentor junior data scientists. The ideal candidate has strong statistical knowledge, hands-on ML experience, and a passion for turning data into actionable insights.",
+      "salary_range": "25 - 40 LPA",
+      "status": "Open",
+      "created_at": "2026-08-01T10:00:00",
+      "updated_at": "2026-08-01T10:00:00"
+    },
+    {
+      "job_id": "JD-002",
+      "title": "ML Engineer",
+      "department": "Platform Engineering",
+      "employment_type": "Full-time",
+      "location": "Hyderabad, India (On-site)",
+      "required_experience": "2-5 years",
+      "required_education": "Graduate",
+      "required_skills": ["Python", "MLOps", "Docker", "Kubernetes", "REST APIs"],
+      "preferred_skills": ["Airflow", "FastAPI", "GCP", "Model Monitoring", "CI/CD"],
+      "description": "Join our Platform Engineering team to build scalable ML infrastructure. You will be responsible for deploying and maintaining machine learning models in production, building data pipelines, and improving model serving performance. You will collaborate with data scientists to bring models from prototype to production reliably and efficiently.",
+      "salary_range": "15 - 28 LPA",
+      "status": "Open",
+      "created_at": "2026-08-03T09:30:00",
+      "updated_at": "2026-08-03T09:30:00"
+    },
+    {
+      "job_id": "JD-003",
+      "title": "HR Analytics Specialist",
+      "department": "Human Resources",
+      "employment_type": "Full-time",
+      "location": "Mumbai, India (Remote)",
+      "required_experience": "2-4 years",
+      "required_education": "Graduate",
+      "required_skills": ["Excel", "Power BI", "HR Analytics", "Data Analysis", "Python"],
+      "preferred_skills": ["Tableau", "SQL", "HRIS Systems", "People Analytics"],
+      "description": "We are seeking an HR Analytics Specialist to help transform our people data into meaningful insights. You will design dashboards, conduct workforce analysis, support talent acquisition with data-driven tools, and help ensure equitable hiring practices. This role is ideal for someone at the intersection of HR and data analytics.",
+      "salary_range": "8 - 15 LPA",
+      "status": "Closed",
+      "created_at": "2026-07-15T11:00:00",
+      "updated_at": "2026-08-04T14:00:00"
+    }
+  ]
+}
