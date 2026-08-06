@@ -1,7 +1,33 @@
+# ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 .ipynb_checkpoints/
+
+# ── Virtual environments ─────────────────────────────────────────────────────
 .venv/
 venv/
+env/
+ENV/
+
+# ── Environment / secrets ────────────────────────────────────────────────────
 .env
+.env.*
+
+# ── Backup files (kept locally, never committed) ─────────────────────────────
+app_backup*.py
+*_backup*.py
+*_backup/
+
+# ── Model artifacts ──────────────────────────────────────────────────────────
 models/*.pkl
+models/*.joblib
+
+# ── OS / IDE noise ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Streamlit cache ──────────────────────────────────────────────────────────
+.streamlit/secrets.toml
