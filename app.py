@@ -301,7 +301,7 @@ def render_explainability_page():
     with col2:
         st.markdown("### 🖼️ SHAP Summary Visualization")
         if os.path.exists(fig_path):
-            st.image(fig_path, use_column_width=True)
+            st.image(fig_path, width="content")
         else:
             st.warning("SHAP summary plot missing.")
 
