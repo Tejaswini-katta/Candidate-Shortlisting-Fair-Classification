@@ -15,6 +15,7 @@ Run locally:
 
 import os
 import json
+import random
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -1259,6 +1260,17 @@ def render_ranking_page():
                     unsafe_allow_html=True
                 )
 
+            # ── Open Full Profile button ──────────────────────────────────────
+            st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+            if st.button(
+                "👤 Open Full Candidate Profile",
+                key=f"open_profile_{sel_id}",
+                use_container_width=False,
+            ):
+                st.session_state["view_profile_id"] = str(sel_id)
+                st.session_state["nav_default_idx"] = 6   # index of Candidate Profile in nav
+                st.rerun()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE 3: JOB DESCRIPTION MANAGEMENT
@@ -1741,7 +1753,657 @@ def render_job_descriptions_page():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 4: FAIRNESS DASHBOARD  (unchanged logic, theme-aware matplotlib)
+# PAGE 4: CANDIDATE PROFILE
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Name generation (deterministic from enrollee_id) ──────────────────────────
+_MALE_NAMES   = ["Arjun","Rahul","Vikram","Suresh","Amit","Rohan","Dev","Karan",
+                  "Siddharth","Aditya","Ravi","Nikhil","Varun","Harsh","Pranav",
+                  "Akash","Deepak","Manish","Rajesh","Vivek"]
+_FEMALE_NAMES = ["Priya","Anjali","Neha","Sneha","Pooja","Divya","Kavitha",
+                  "Shreya","Meera","Aisha","Nisha","Sonal","Ritu","Swati",
+                  "Lakshmi","Ananya","Deepika","Pallavi","Smita","Reena"]
+_LAST_NAMES   = ["Sharma","Patel","Singh","Kumar","Gupta","Reddy","Verma",
+                  "Nair","Mehta","Joshi","Shah","Iyer","Rao","Malhotra",
+                  "Saxena","Bhatt","Pillai","Shetty","Kapoor","Chopra"]
+
+
+def _generate_candidate_name(enrollee_id, gender: str = "Unknown") -> str:
+    """Deterministic name from enrollee_id seed — same ID always gives same name."""
+    rng = random.Random(int(str(enrollee_id)))
+    first = rng.choice(_FEMALE_NAMES if gender == "Female" else _MALE_NAMES)
+    return f"{first} {rng.choice(_LAST_NAMES)}"
+
+
+# ── Recruiter notes store ──────────────────────────────────────────────────
+_NOTES_PATH = os.path.join("data", "notes", "recruiter_notes.json")
+
+
+def _load_notes() -> dict:
+    if not os.path.exists(_NOTES_PATH):
+        return {}
+    try:
+        with open(_NOTES_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_note(candidate_id: str, text: str) -> None:
+    notes = _load_notes()
+    notes[str(candidate_id)] = {
+        "text":       text,
+        "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    os.makedirs(os.path.dirname(_NOTES_PATH), exist_ok=True)
+    with open(_NOTES_PATH, "w", encoding="utf-8") as f:
+        json.dump(notes, f, indent=2, ensure_ascii=False)
+
+
+# ── SHAP feature label map ───────────────────────────────────────────────────
+_FEATURE_LABELS = {
+    "city_development_index":              "City Development Index",
+    "experience":                          "Years of Experience",
+    "training_hours":                      "Training Hours",
+    "education_level":                     "Education Level",
+    "company_size":                        "Company Size",
+    "last_new_job":                        "Years Since Last Job Change",
+    "relevent_experience":                 "Relevant Experience",
+    "company_type_Pvt Ltd":                "Private Company Background",
+    "company_type_Funded Startup":         "Funded Startup Background",
+    "company_type_Public Sector":          "Public Sector Background",
+    "company_type_NGO":                    "NGO Background",
+    "company_type_Unknown":                "Unknown Company Type",
+    "company_type_Early Stage Startup":    "Early Stage Startup Background",
+    "company_type_Other":                  "Other Company Type",
+    "major_discipline_STEM":               "STEM Discipline",
+    "major_discipline_Humanities":         "Humanities Discipline",
+    "major_discipline_Business Degree":    "Business Discipline",
+    "major_discipline_Arts":               "Arts Discipline",
+    "major_discipline_No Major":           "No Major Declared",
+    "major_discipline_Unknown":            "Unknown Major",
+    "major_discipline_Other":              "Other Discipline",
+    "enrolled_university_Full time course":"Full-Time University Enrollment",
+    "enrolled_university_Part time course":"Part-Time University Enrollment",
+    "enrolled_university_no_enrollment":   "Not Enrolled in University",
+    "enrolled_university_Unknown":         "University Status Unknown",
+    "gender_Male":                         "Male Gender",
+    "gender_Female":                       "Female Gender",
+    "gender_Other":                        "Other Gender",
+    "gender_Unknown":                      "Gender Not Disclosed",
+}
+
+
+def generate_candidate_narrative(candidate_row: dict) -> dict:
+    """
+    Extends generate_candidate_recommendation() with recruiter-friendly narrative,
+    strengths, weaknesses, risks, and suggested interview type.
+    No ML model or src/ files called.
+    """
+    rec = generate_candidate_recommendation(candidate_row)
+
+    score       = float(candidate_row.get("Suitability Score", 0))
+    tier        = str(candidate_row.get("Priority Tier", "Reserve"))
+    experience  = str(candidate_row.get("Experience", "Unknown"))
+    education   = str(candidate_row.get("Education", "Unknown"))
+    training    = int(candidate_row.get("Training Hours", 0) or 0)
+    rel_exp     = str(candidate_row.get("Relevant Exp", ""))
+    major       = str(candidate_row.get("Major", ""))
+    company_type = str(candidate_row.get("Company Type", ""))
+    cdi         = float(candidate_row.get("City CDI", 0) or 0)
+
+    has_rel_exp = "has relevent" in rel_exp.lower()
+    exp_rank    = _EXP_ORDER.index(experience) if experience in _EXP_ORDER else 5
+    is_senior   = exp_rank >= 14
+    is_mid      = 4 <= exp_rank <= 13
+    edu_tier    = _EDU_TIER.get(education, 1)
+
+    # ── Narrative paragraph ────────────────────────────────────────────────
+    parts = [f"This candidate carries a {rec['score_band'].lower()} suitability score of {score:.3f}"]
+    if has_rel_exp:
+        parts.append("with confirmed relevant domain experience")
+    if edu_tier >= 3:
+        parts.append(f"and holds an advanced {education} degree")
+    elif edu_tier == 2:
+        parts.append(f"with a solid {education} educational foundation")
+    if is_senior:
+        parts.append(f"and brings substantial seniority ({experience} years)")
+    elif is_mid:
+        parts.append(f"and has solid mid-level experience ({experience} years)")
+    if training >= 100:
+        parts.append(f"A high training investment of {training} hours reflects strong self-driven learning")
+    narrative = ". ".join(parts) + f". {rec['action']}."
+
+    # ── Strengths ────────────────────────────────────────────────────────────
+    strengths = []
+    if score >= 0.65:
+        strengths.append(f"High model suitability score ({score:.3f}) — strong predictive fit")
+    if has_rel_exp:
+        strengths.append("Confirmed relevant experience in the required domain")
+    if edu_tier >= 3:
+        strengths.append(f"Advanced {education} education adds competitive edge")
+    if is_senior or is_mid:
+        strengths.append(f"{experience} years of experience demonstrates role readiness")
+    if training >= 100:
+        strengths.append(f"High training investment ({training} hrs) reflects self-driven growth")
+    if cdi >= 0.80:
+        strengths.append(f"Based in a high-development city (CDI: {cdi:.3f})")
+    if "STEM" in major:
+        strengths.append("STEM background aligns with technical role demands")
+    if company_type in ["Pvt Ltd", "Funded Startup"]:
+        strengths.append(f"Previous {company_type} experience adds relevant commercial context")
+    if not strengths:
+        strengths.append("Candidate meets minimum screening criteria")
+
+    # ── Weaknesses ───────────────────────────────────────────────────────────
+    weaknesses = []
+    if score < 0.55:
+        weaknesses.append(f"Suitability score ({score:.3f}) is below the standard shortlisting threshold")
+    if not has_rel_exp:
+        weaknesses.append("No direct relevant experience — domain onboarding may be required")
+    if exp_rank <= 2:
+        weaknesses.append(f"Limited professional experience ({experience} yrs)")
+    if edu_tier <= 1:
+        weaknesses.append(f"Education level ({education}) may fall short of preferred requirements")
+    if training < 30:
+        weaknesses.append("Very low training hours indicate limited upskilling investment")
+    if company_type in ["Unknown", ""]:
+        weaknesses.append("Previous employer background is unknown")
+    if not weaknesses:
+        weaknesses.append("No significant weaknesses identified in available data")
+
+    # ── Risks ───────────────────────────────────────────────────────────────
+    risks = []
+    if tier in ["Extended", "Reserve"]:
+        risks.append("Below top-tier threshold — higher risk of not meeting role expectations")
+    if not has_rel_exp and score < 0.65:
+        risks.append("Lack of relevant experience combined with moderate score increases onboarding risk")
+    if exp_rank == 0:
+        risks.append("Entry-level profile requires significant mentorship investment")
+    if cdi < 0.50:
+        risks.append("Lower-development city background may indicate limited competitive exposure")
+    if not risks:
+        risks.append("Low overall risk profile — candidate meets standard shortlisting criteria")
+
+    # ── Interview type ──────────────────────────────────────────────────────────
+    if tier == "High Priority":
+        interview_type = "Technical Panel Interview" if (is_senior or is_mid) else "HR Screening + Technical Interview"
+    elif tier == "Qualified":
+        interview_type = "Technical Interview" if has_rel_exp else "HR Pre-Screening"
+    elif tier == "Extended":
+        interview_type = "Competency Assessment + Interview"
+    else:
+        interview_type = "Not recommended for current cycle"
+
+    return {
+        **rec,
+        "narrative":      narrative,
+        "strengths":      strengths[:4],
+        "weaknesses":     weaknesses[:3],
+        "risks":          risks[:3],
+        "interview_type": interview_type,
+    }
+
+
+def render_candidate_profile_page(candidate_id: str | None):
+    """Full ATS-style candidate profile page."""
+    t  = ThemeManager.get()
+    df = _build_ranking_df()
+
+    # ── Back + search bar ───────────────────────────────────────────────────
+    top_left, top_right = st.columns([1, 4])
+    with top_left:
+        if st.button("← Back to Rankings", key="profile_back_btn"):
+            st.session_state["view_profile_id"] = None
+            st.rerun()
+    with top_right:
+        all_ids = df["Candidate ID"].astype(str).tolist() if not df.empty else []
+        default_idx = all_ids.index(str(candidate_id)) if candidate_id and str(candidate_id) in all_ids else 0
+        chosen_id = st.selectbox(
+            "Select candidate",
+            options=all_ids,
+            index=default_idx,
+            key="profile_id_select",
+            label_visibility="collapsed",
+        )
+        if str(chosen_id) != str(candidate_id):
+            st.session_state["view_profile_id"] = str(chosen_id)
+            st.rerun()
+
+    if df.empty:
+        st.error("Candidate data not available. Please run `python run_ranking.py` first.")
+        return
+
+    # Resolve candidate
+    cid = str(candidate_id) if candidate_id else (all_ids[0] if all_ids else None)
+    if not cid:
+        st.info("Select a candidate from the Rankings page or use the dropdown above.")
+        return
+
+    row_data = df[df["Candidate ID"].astype(str) == cid]
+    if row_data.empty:
+        st.warning(f"Candidate ID {cid} not found in rankings.")
+        return
+
+    r   = row_data.iloc[0].to_dict()
+    nav = generate_candidate_narrative(r)
+
+    # ── Profile meta ─────────────────────────────────────────────────────────
+    gender      = r.get("Gender", "Unknown")
+    name        = _generate_candidate_name(cid, gender)
+    score       = float(r.get("Suitability Score", 0))
+    percentile  = float(r.get("Percentile", 0))
+    tier        = r.get("Priority Tier", "Reserve")
+    education   = r.get("Education", "Unknown")
+    major       = r.get("Major", "Unknown")
+    experience  = r.get("Experience", "Unknown")
+    training    = int(r.get("Training Hours", 0) or 0)
+    company_type = r.get("Company Type", "Unknown")
+    company_size = r.get("Company Size", "Unknown")
+    cdi         = float(r.get("City CDI", 0) or 0)
+    rel_exp     = r.get("Relevant Exp", "Unknown")
+    shortlisted = int(r.get("Shortlisted", 0))
+
+    TIER_CLR = {
+        "High Priority": ("#ef4444", "rgba(239,68,68,0.1)",   "rgba(239,68,68,0.25)"),
+        "Qualified":     ("#10b981", "rgba(16,185,129,0.1)",  "rgba(16,185,129,0.25)"),
+        "Extended":      ("#f59e0b", "rgba(245,158,11,0.1)",  "rgba(245,158,11,0.25)"),
+        "Reserve":       ("#6b7280", "rgba(107,114,128,0.1)", "rgba(107,114,128,0.25)"),
+    }
+    CONF_CLR = {
+        "High":   ("#10b981", "rgba(16,185,129,0.1)",  "rgba(16,185,129,0.25)"),
+        "Medium": ("#f59e0b", "rgba(245,158,11,0.1)",  "rgba(245,158,11,0.25)"),
+        "Low":    ("#6b7280", "rgba(107,114,128,0.1)", "rgba(107,114,128,0.25)"),
+    }
+    BAND_CLR = {"Excellent": "#10b981", "Strong": "#3b82f6", "Moderate": "#f59e0b", "Weak": "#ef4444"}
+    AVATAR   = {"Female": "👩", "Male": "👨"}
+
+    t_clr, t_bg, t_bd  = TIER_CLR.get(tier,          TIER_CLR["Reserve"])
+    c_clr, c_bg, c_bd  = CONF_CLR.get(nav["confidence"], CONF_CLR["Low"])
+    b_clr               = BAND_CLR.get(nav["score_band"], "#6b7280")
+    avatar              = AVATAR.get(gender, "🧑")
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # PROFILE HEADER CARD
+    # ─────────────────────────────────────────────────────────────────────────────
+    pct_bar = min(score * 100, 100)
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:14px;padding:22px 28px;margin-bottom:18px;position:relative;overflow:hidden;">'
+        f'<div style="position:absolute;top:0;left:0;right:0;height:3px;'
+        f'background:linear-gradient(90deg,{t_clr},{b_clr},#8b5cf6);"></div>'
+        # Avatar + Name block
+        f'<div style="display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;">'
+        f'<div style="font-size:3.8rem;background:{t_bg};border:2px solid {t_bd};'
+        f'border-radius:50%;width:72px;height:72px;display:flex;align-items:center;'
+        f'justify-content:center;flex-shrink:0;">{avatar}</div>'
+        f'<div style="flex:1;">'
+        f'<div style="color:{t["text_primary"]};font-size:1.5rem;font-weight:800;'
+        f'margin-bottom:4px;">{name}</div>'
+        f'<div style="color:{t["text_secondary"]};font-size:0.82rem;margin-bottom:10px;">'
+        f'Candidate ID: <strong style="color:{t["text_primary"]};">{cid}</strong>  ·  '
+        f'Gender: <strong style="color:{t["text_primary"]};">{gender}</strong>  ·  '
+        f'City CDI: <strong style="color:{t["text_primary"]};">{cdi:.3f}</strong></div>'
+        # Badges row
+        f'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+        f'<span style="background:{t_bg};color:{t_clr};border:1px solid {t_bd};'
+        f'padding:3px 12px;border-radius:20px;font-size:0.73rem;font-weight:700;">{tier}</span>'
+        f'<span style="background:{c_bg};color:{c_clr};border:1px solid {c_bd};'
+        f'padding:3px 12px;border-radius:20px;font-size:0.73rem;font-weight:700;">{nav["confidence"]} Confidence</span>'
+        f'<span style="background:{b_clr}22;color:{b_clr};border:1px solid {b_clr}44;'
+        f'padding:3px 12px;border-radius:20px;font-size:0.73rem;font-weight:700;">{nav["score_band"]} Score</span>'
+        + (f'<span style="background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.25);'
+           f'padding:3px 12px;border-radius:20px;font-size:0.73rem;font-weight:700;">Shortlisted</span>'
+           if shortlisted else '') +
+        f'</div></div>'
+        # Score gauge on right
+        f'<div style="margin-left:auto;text-align:right;min-width:140px;">'
+        f'<div style="color:{t["text_muted"]};font-size:0.62rem;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px;">Suitability Score</div>'
+        f'<div style="color:{b_clr};font-size:2.2rem;font-weight:900;line-height:1;">{score:.3f}</div>'
+        f'<div style="color:{t["text_muted"]};font-size:0.72rem;margin-bottom:8px;">Top {100-percentile:.1f}% · Percentile {percentile:.1f}</div>'
+        f'<div style="background:{t["metric_bg"]};border-radius:6px;height:8px;overflow:hidden;">'
+        f'<div style="background:linear-gradient(90deg,{b_clr},{t_clr});height:100%;'
+        f'width:{pct_bar:.1f}%;border-radius:6px;"></div></div>'
+        f'</div></div></div>',
+        unsafe_allow_html=True
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    # TABS
+    # ─────────────────────────────────────────────────────────────────────────────
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📋 Profile",
+        "🤖 AI Recommendation",
+        "📊 Model Explanation",
+        "📝 Recruiter Notes",
+        "⚡ Actions",
+    ])
+
+    # ═══════ TAB 1: PROFILE ═══════════════════════════════════════════════════
+    with tab1:
+        col_l, col_r = st.columns([1, 1], gap="medium")
+
+        with col_l:
+            # Education card
+            def _row(label, value, color=None):
+                vc = color or t["text_primary"]
+                return (
+                    f'<div style="display:flex;justify-content:space-between;padding:6px 0;'
+                    f'border-bottom:1px solid {t["panel_border_l"]};">'  
+                    f'<span style="color:{t["text_label"]};font-size:0.77rem;">{label}</span>'
+                    f'<span style="color:{vc};font-weight:600;font-size:0.8rem;">{value}</span>'
+                    f'</div>'
+                )
+            edu_html = (
+                _row("Education Level",  education,         t["text_primary"])
+                + _row("Major / Field",  major,             "#3b82f6")
+                + _row("Training Hours", f"{training} hrs", t["text_primary"])
+                + _row("Relevant Exp",   rel_exp,           "#10b981" if "has" in rel_exp.lower() else "#f59e0b")
+            )
+            st.markdown(
+                f'<div class="panel-card" style="margin-bottom:14px;">'
+                f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.9rem;'
+                f'margin-bottom:12px;">🎓 Education</div>' + edu_html + '</div>',
+                unsafe_allow_html=True
+            )
+
+        with col_r:
+            # Professional card
+            prof_html = (
+                _row("Experience",     f"{experience} yrs", t["text_primary"])
+                + _row("Company Type", company_type,         "#3b82f6")
+                + _row("Company Size", company_size,         t["text_primary"])
+                + _row("City CDI",     f"{cdi:.3f}",         "#10b981" if cdi >= 0.80 else t["text_secondary"])
+                + _row("Shortlisted",  "Yes" if shortlisted else "No",
+                       "#10b981" if shortlisted else "#ef4444")
+            )
+            st.markdown(
+                f'<div class="panel-card">'
+                f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.9rem;'
+                f'margin-bottom:12px;">💼 Professional Information</div>' + prof_html + '</div>',
+                unsafe_allow_html=True
+            )
+
+    # ═══════ TAB 2: AI RECOMMENDATION ════════════════════════════════════════
+    with tab2:
+        # Narrative
+        st.markdown(
+            f'<div class="panel-card" style="margin-bottom:14px;">'
+            f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.9rem;'
+            f'margin-bottom:10px;">Recruiter Summary</div>'
+            f'<div style="color:{t["text_secondary"]};font-size:0.88rem;line-height:1.65;'
+            f'font-style:italic;">{nav["narrative"]}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # Hiring decision card
+        st.markdown(
+            f'<div class="panel-card" style="margin-bottom:14px;background:{c_bg};border-color:{c_bd};">'
+            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">'
+            f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.9rem;">Hiring Decision</div>'
+            f'<span style="background:{c_bg};color:{c_clr};border:1px solid {c_bd};'
+            f'padding:2px 12px;border-radius:20px;font-size:0.7rem;font-weight:700;">{nav["confidence"]} Confidence</span>'
+            f'</div>'
+            f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
+            f'<div style="background:{t["card_bg"]};border-radius:8px;padding:10px;border:1px solid {t["card_border"]};">'
+            f'<div style="color:{t["text_muted"]};font-size:0.62rem;font-weight:700;text-transform:uppercase;'
+            f'letter-spacing:0.08em;margin-bottom:4px;">Recommended Action</div>'
+            f'<div style="color:{c_clr};font-weight:800;font-size:0.9rem;">{nav["action"]}</div></div>'
+            f'<div style="background:{t["card_bg"]};border-radius:8px;padding:10px;border:1px solid {t["card_border"]};">'
+            f'<div style="color:{t["text_muted"]};font-size:0.62rem;font-weight:700;text-transform:uppercase;'
+            f'letter-spacing:0.08em;margin-bottom:4px;">Suggested Interview</div>'
+            f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.88rem;">{nav["interview_type"]}</div></div>'
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+
+        # Strengths / Weaknesses / Risks
+        sw1, sw2, sw3 = st.columns(3, gap="small")
+        for col_w, title, items, clr in [
+            (sw1, "Strengths",  nav["strengths"],  "#10b981"),
+            (sw2, "Weaknesses", nav["weaknesses"], "#f59e0b"),
+            (sw3, "Risks",      nav["risks"],      "#ef4444"),
+        ]:
+            with col_w:
+                items_html = "".join(
+                    f'<div style="display:flex;gap:8px;padding:6px 0;'
+                    f'border-bottom:1px solid {t["panel_border_l"]};">'  
+                    f'<span style="color:{clr};flex-shrink:0;">▸</span>'
+                    f'<span style="color:{t["text_secondary"]};font-size:0.78rem;line-height:1.4;">{item}</span>'
+                    f'</div>'
+                    for item in items
+                )
+                st.markdown(
+                    f'<div class="panel-card">'
+                    f'<div style="color:{clr};font-weight:700;font-size:0.82rem;margin-bottom:10px;">'
+                    f'{title}</div>' + items_html + '</div>',
+                    unsafe_allow_html=True
+                )
+
+    # ═══════ TAB 3: MODEL EXPLANATION (SHAP) ══════════════════════════════════
+    with tab3:
+        shap_path = os.path.join("reports", "metrics", "shap_feature_importance.csv")
+        shap_df = load_csv_report(shap_path)
+
+        if not shap_df.empty:
+            shap_df["Feature_Label"] = shap_df["Feature"].map(
+                lambda f: _FEATURE_LABELS.get(f, f.replace("_", " ").title())
+            )
+            top_shap = shap_df.nlargest(12, "Mean_Abs_Impact").sort_values("Mean_Abs_Impact")
+
+            fig_shap = go.Figure(go.Bar(
+                x=top_shap["Mean_Abs_Impact"],
+                y=top_shap["Feature_Label"],
+                orientation="h",
+                marker=dict(
+                    color=top_shap["Mean_Abs_Impact"],
+                    colorscale=[[0, "#1d4ed8"], [0.5, "#7c3aed"], [1, "#ef4444"]],
+                    showscale=False,
+                ),
+                text=[f"{v:.3f}" for v in top_shap["Mean_Abs_Impact"]],
+                textposition="outside",
+                textfont=dict(color=t["plotly_font"], size=11),
+                hovertemplate="<b>%{y}</b><br>Mean |SHAP|: %{x:.4f}<extra></extra>",
+            ))
+            fig_shap.update_layout(
+                paper_bgcolor=t["plotly_paper"], plot_bgcolor=t["plotly_plot"],
+                font=dict(family="Inter", color=t["plotly_font"]),
+                xaxis=dict(title="Mean |SHAP Value|", gridcolor=t["plotly_grid"],
+                           tickfont=dict(color=t["plotly_font"])),
+                yaxis=dict(tickfont=dict(color=t["plotly_font"]), categoryorder="total ascending"),
+                margin=dict(l=10, r=60, t=10, b=10), height=400,
+            )
+            st.markdown('<div class="section-header">Global Feature Importance (SHAP)</div>',
+                        unsafe_allow_html=True)
+            st.plotly_chart(fig_shap, use_container_width=True)
+
+            # Business explanation
+            top3 = shap_df.nlargest(3, "Mean_Abs_Impact")["Feature"].tolist()
+            top3_labels = [_FEATURE_LABELS.get(f, f) for f in top3]
+            st.markdown(
+                f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};'
+                f'border-radius:10px;padding:14px 18px;margin-top:8px;">'
+                f'<div style="color:#3b82f6;font-weight:700;font-size:0.82rem;margin-bottom:6px;">'
+                f'Business Explanation</div>'
+                f'<div style="color:{t["text_secondary"]};font-size:0.82rem;line-height:1.6;">'
+                f'Across all evaluated candidates, the model\'s predictions are most influenced by '
+                f'<strong>{top3_labels[0]}</strong> ({shap_df.iloc[0]["Importance_Percentage"]}%), '
+                f'<strong>{top3_labels[1]}</strong> ({shap_df.iloc[1]["Importance_Percentage"]}%), '
+                f'and <strong>{top3_labels[2]}</strong> ({shap_df.iloc[2]["Importance_Percentage"]}%). '
+                f'These are the dominant signals used by the ML model to determine candidate suitability.'
+                f'</div></div>',
+                unsafe_allow_html=True
+            )
+
+            # Per-candidate sample if available
+            sample_path = os.path.join("reports", "metrics", "sample_candidate_shap_explanation.json")
+            sample_data = load_json_config(sample_path)
+            if sample_data and str(sample_data.get("enrollee_id", "")) == str(cid):
+                st.markdown('<div class="section-header" style="margin-top:16px;">Per-Candidate SHAP Values</div>',
+                            unsafe_allow_html=True)
+                pos_factors = sample_data.get("top_positive_factors", [])
+                neg_factors = sample_data.get("top_negative_factors", [])
+
+                pf1, pf2 = st.columns(2, gap="medium")
+                with pf1:
+                    pos_html = "".join(
+                        f'<div style="display:flex;justify-content:space-between;padding:5px 0;'
+                        f'border-bottom:1px solid {t["panel_border_l"]};">'  
+                        f'<span style="color:{t["text_secondary"]};font-size:0.78rem;">'
+                        f'{_FEATURE_LABELS.get(f["Feature"],f["Feature"])}</span>'
+                        f'<span style="color:#10b981;font-weight:700;font-size:0.8rem;">+{f["Impact"]:.4f}</span>'
+                        f'</div>'
+                        for f in pos_factors
+                    )
+                    st.markdown(
+                        f'<div class="panel-card"><div style="color:#10b981;font-weight:700;'
+                        f'font-size:0.82rem;margin-bottom:10px;">Top Positive Factors</div>'
+                        + pos_html + '</div>', unsafe_allow_html=True
+                    )
+                with pf2:
+                    neg_html = "".join(
+                        f'<div style="display:flex;justify-content:space-between;padding:5px 0;'
+                        f'border-bottom:1px solid {t["panel_border_l"]};">'  
+                        f'<span style="color:{t["text_secondary"]};font-size:0.78rem;">'
+                        f'{_FEATURE_LABELS.get(f["Feature"],f["Feature"])}</span>'
+                        f'<span style="color:#ef4444;font-weight:700;font-size:0.8rem;">{f["Impact"]:.4f}</span>'
+                        f'</div>'
+                        for f in neg_factors
+                    )
+                    st.markdown(
+                        f'<div class="panel-card"><div style="color:#ef4444;font-weight:700;'
+                        f'font-size:0.82rem;margin-bottom:10px;">Top Negative Factors</div>'
+                        + neg_html + '</div>', unsafe_allow_html=True
+                    )
+        else:
+            st.info("SHAP feature importance data not found. Please run `python run_explainability.py` first.")
+
+    # ═══════ TAB 4: RECRUITER NOTES ══════════════════════════════════════════
+    with tab4:
+        notes = _load_notes()
+        existing_note = notes.get(str(cid), {})
+        existing_text = existing_note.get("text", "")
+        existing_ts   = existing_note.get("updated_at", "")
+
+        if existing_text:
+            st.markdown(
+                f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};'
+                f'border-radius:10px;padding:14px 18px;margin-bottom:16px;">'
+                f'<div style="display:flex;justify-content:space-between;margin-bottom:8px;">'
+                f'<span style="color:#3b82f6;font-weight:700;font-size:0.82rem;">Current Note</span>'
+                f'<span style="color:{t["text_hint"]};font-size:0.7rem;">Updated: {existing_ts[:10]}</span>'
+                f'</div>'
+                f'<div style="color:{t["text_secondary"]};font-size:0.84rem;line-height:1.6;'
+                f'white-space:pre-wrap;">{existing_text}</div></div>',
+                unsafe_allow_html=True
+            )
+
+        with st.form(f"note_form_{cid}"):
+            note_text = st.text_area(
+                "Add or update recruiter note:",
+                value=existing_text,
+                height=140,
+                placeholder="Add interview observations, follow-up actions, concerns, or next steps..."
+            )
+            save_note = st.form_submit_button("💾 Save Note", use_container_width=True)
+
+        if save_note:
+            _save_note(str(cid), note_text.strip())
+            st.success("Note saved successfully!")
+            st.rerun()
+
+        if existing_text:
+            if st.button("🗑️ Clear Note", key=f"clear_note_{cid}"):
+                _save_note(str(cid), "")
+                st.rerun()
+
+    # ═══════ TAB 5: ACTIONS ═══════════════════════════════════════════════════
+    with tab5:
+        st.markdown('<div class="section-header">Hiring Actions</div>', unsafe_allow_html=True)
+        a1, a2, a3, a4 = st.columns(4)
+        actions = [
+            (a1, "#10b981", "rgba(16,185,129,0.1)", "rgba(16,185,129,0.25)",
+             "Schedule Technical Interview", "Proceed to technical screening"),
+            (a2, "#3b82f6", "rgba(59,130,246,0.1)",  "rgba(59,130,246,0.25)",
+             "Schedule HR Round",            "Proceed to HR pre-screening"),
+            (a3, "#f59e0b", "rgba(245,158,11,0.1)",  "rgba(245,158,11,0.25)",
+             "Keep in Pipeline",             "Flag for future consideration"),
+            (a4, "#ef4444", "rgba(239,68,68,0.1)",   "rgba(239,68,68,0.25)",
+             "Reject",                       "Remove from current cycle"),
+        ]
+        for col_a, clr, bg, bd, action_label, sub_label in actions:
+            with col_a:
+                st.markdown(
+                    f'<div style="background:{bg};border:1px solid {bd};border-radius:12px;'
+                    f'padding:16px;text-align:center;margin-bottom:8px;">'
+                    f'<div style="color:{clr};font-weight:700;font-size:0.88rem;'
+                    f'margin-bottom:4px;">{action_label}</div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.7rem;">{sub_label}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+        st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Downloads</div>', unsafe_allow_html=True)
+        dl1, dl2, dl3 = st.columns(3)
+        with dl1:
+            # Download candidate data as CSV
+            profile_csv = pd.DataFrame([{
+                k: v for k, v in r.items() if k != "_rec_json"
+            }]).to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📄 Download Candidate Data (CSV)",
+                data=profile_csv,
+                file_name=f"candidate_{cid}_profile.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with dl2:
+            # Download recommendation report as text
+            report_lines = [
+                f"Candidate Profile Report",
+                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                f"=" * 50,
+                f"Name:        {name}",
+                f"ID:          {cid}",
+                f"Gender:      {gender}",
+                f"Tier:        {tier}",
+                f"Score:       {score:.4f}",
+                f"Percentile:  {percentile:.1f}",
+                f"Confidence:  {nav['confidence']}",
+                f"="*50,
+                f"RECOMMENDATION",
+                f"Action:      {nav['action']}",
+                f"Interview:   {nav['interview_type']}",
+                f"Narrative:   {nav['narrative']}",
+                f"="*50,
+                f"STRENGTHS:",
+            ] + [f"  - {s}" for s in nav["strengths"]] + [
+                f"WEAKNESSES:",
+            ] + [f"  - {w}" for w in nav["weaknesses"]] + [
+                f"RISKS:",
+            ] + [f"  - {ri}" for ri in nav["risks"]]
+            note_data = _load_notes().get(str(cid), {})
+            if note_data.get("text"):
+                report_lines += [f"="*50, f"RECRUITER NOTES:", note_data["text"]]
+            report_text = "\n".join(report_lines).encode("utf-8")
+            st.download_button(
+                label="📋 Download Recommendation Report (TXT)",
+                data=report_text,
+                file_name=f"candidate_{cid}_recommendation.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
+        with dl3:
+            if st.button("← Back to Rankings", use_container_width=True, key="back_from_actions"):
+                st.session_state["view_profile_id"] = None
+                st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE 5: FAIRNESS DASHBOARD  (unchanged logic, theme-aware matplotlib)
 # ─────────────────────────────────────────────────────────────────────────────
 def render_fairness_page():
     t = ThemeManager.get()
@@ -2089,6 +2751,7 @@ def main():
                 "⚙️  Settings",
             ],
             label_visibility="collapsed",
+            index=st.session_state.pop("nav_default_idx", 0),
         )
 
         st.markdown(f"<hr style='border-color:{t['divider']};margin:10px 0;'>", unsafe_allow_html=True)
@@ -2126,6 +2789,8 @@ def main():
         render_ranking_page()
     elif "Job" in page and "Description" in page:
         render_job_descriptions_page()
+    elif "Profile" in page or st.session_state.get("view_profile_id"):
+        render_candidate_profile_page(st.session_state.get("view_profile_id"))
     elif "Fairness" in page:
         render_fairness_page()
     elif "SHAP" in page:
