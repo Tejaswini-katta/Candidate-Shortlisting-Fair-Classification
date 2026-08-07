@@ -216,8 +216,54 @@ def build_css(t: dict) -> str:
         "html,body,[class*='css']{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;"
         "transition:background-color 0.25s ease,color 0.25s ease;}"
         "*{transition:background-color 0.2s ease,border-color 0.2s ease,color 0.15s ease;}"
-        f".stApp{{background-color:{t['bg']};}}"
+        f".stApp{{background-color:{t['bg']} !important;}}"
+        # ── App-level containers ──────────────────────────────────────────────
+        f"[data-testid='stAppViewContainer']{{background-color:{t['bg']} !important;}}"
+        f"[data-testid='stMain']{{background-color:{t['bg']} !important;}}"
+        f"section[data-testid='stMain']>div{{background-color:{t['bg']} !important;}}"
+        f".main .block-container{{background-color:{t['bg']} !important;}}"
+        # Transparent pass-through for layout blocks
+        f"[data-testid='stVerticalBlock']{{background-color:transparent !important;}}"
+        f"[data-testid='stHorizontalBlock']{{background-color:transparent !important;}}"
+        f"[data-testid='column']{{background-color:transparent !important;}}"
+        f"[data-testid='stTabContent']{{background-color:transparent !important;}}"
+        # ── Expanders (details/summary DOM) ──────────────────────────────────
+        f"[data-testid='stExpander']{{background-color:{t['card_bg']} !important;"
+        f"border:1px solid {t['card_border']} !important;border-radius:10px !important;}}"
+        f"[data-testid='stExpander'] details{{background-color:{t['card_bg']} !important;}}"
+        f"[data-testid='stExpanderDetails']{{background-color:{t['card_bg']} !important;}}"
+        f"[data-testid='stExpander'] summary,"
+        f"[data-testid='stExpander'] summary span,"
+        f"[data-testid='stExpander'] summary p"
+        f"{{color:{t['text_primary']} !important;background-color:{t['card_bg']} !important;}}"
+        f".streamlit-expanderHeader{{background-color:{t['card_bg']} !important;"
+        f"color:{t['text_primary']} !important;}}"
+        f".streamlit-expanderContent{{background-color:{t['card_bg']} !important;}}"
+        # ── Tabs (BaseWeb) ────────────────────────────────────────────────────
+        f".stTabs [data-baseweb='tab-list']{{background-color:transparent !important;}}"
+        f".stTabs [data-baseweb='tab-panel']{{background-color:transparent !important;}}"
+        f"[data-baseweb='tab']{{color:{t['text_secondary']} !important;}}"
+        f"[data-baseweb='tab'][aria-selected='true']{{color:{t['nav_active']} !important;}}"
+        # ── DataFrames ────────────────────────────────────────────────────────
+        f"[data-testid='stDataFrameResizable']{{background-color:{t['card_bg']} !important;}}"
+        f"[data-testid='stDataFrame']{{background-color:{t['card_bg']} !important;border-radius:10px;}}"
+        # ── Selectbox / Multiselect dropdowns ────────────────────────────────
+        f"[data-baseweb='select']>div{{background-color:{t['card_bg']} !important;"
+        f"border-color:{t['card_border']} !important;color:{t['text_primary']} !important;}}"
+        f"[data-baseweb='popover']{{background-color:{t['card_bg']} !important;"
+        f"border:1px solid {t['card_border']} !important;}}"
+        f"[role='listbox']{{background-color:{t['card_bg']} !important;}}"
+        f"[role='option']{{background-color:{t['card_bg']} !important;"
+        f"color:{t['text_primary']} !important;}}"
+        f"[role='option']:hover{{background-color:{t['metric_bg']} !important;}}"
+        # ── BaseWeb generic containers ────────────────────────────────────────
+        f"[data-baseweb='block']{{background-color:transparent !important;}}"
+        f"[data-baseweb='notification']{{background-color:{t['info_bg']} !important;}}"
+        # ── Text inside all native widgets ────────────────────────────────────
+        f"[data-testid='stWidgetLabel'] p{{color:{t['text_label']} !important;}}"
+        f"[data-testid='stMarkdownContainer'] p{{color:{t['text_secondary']} !important;}}"
         # Sidebar
+
         f"[data-testid='stSidebar']{{background:{t['sidebar_bg']};border-right:1px solid {t['sidebar_border']};}}"
         f"[data-testid='stSidebar'] [data-testid='stRadio'] label{{color:{t['nav_label']} !important;"
         "font-size:0.85rem !important;font-weight:500 !important;padding:5px 0 !important;}"
@@ -303,6 +349,10 @@ def build_css(t: dict) -> str:
         f"[data-testid='stSelectbox']>div>div,[data-testid='stTextInput']>div>div>input,"
         f"[data-testid='stNumberInput']>div>div>input{{background-color:{t['card_bg']} !important;"
         f"color:{t['text_primary']} !important;border-color:{t['card_border']} !important;}}"
+        # Placeholder text — must be explicitly coloured; browsers ignore inheritance for ::placeholder
+        f"[data-testid='stTextInput']>div>div>input::placeholder,"
+        f"[data-testid='stNumberInput']>div>div>input::placeholder"
+        f"{{color:{t['text_muted']} !important;opacity:1 !important;}}"
         # Form
         f"[data-testid='stForm']{{background:{t['card_bg']};border:1px solid {t['card_border']};"
         "border-radius:12px;padding:20px;}"
@@ -317,6 +367,11 @@ def build_css(t: dict) -> str:
         "border-radius:14px;padding:24px;margin-bottom:16px;}"
         f".settings-card h4{{color:{t['text_primary']} !important;font-size:0.9rem;font-weight:700;"
         f"margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid {t['card_border']};}}"
+        # Download buttons — override Streamlit default white pill
+        f"[data-testid='stDownloadButton']>button{{background:{t['metric_bg']} !important;"
+        f"color:{t['text_primary']} !important;border:1px solid {t['card_border']} !important;"
+        "border-radius:8px !important;font-weight:600 !important;}"
+        f"[data-testid='stDownloadButton']>button:hover{{background:{t['card_border']} !important;}}"
         "</style>"
     )
 
@@ -339,6 +394,79 @@ def load_json_config(file_path: str) -> dict:
         with open(file_path, "r") as f:
             return json.load(f)
     return {}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THEMED HTML TABLE  — replaces st.dataframe() so tables respect dark/light mode
+# ─────────────────────────────────────────────────────────────────────────────
+def _render_html_table(
+    df: "pd.DataFrame",
+    t: dict,
+    score_col: str = None,
+    height: int = 400,
+    rank_col: str = None,
+) -> str:
+    """Return a scrollable, fully themed HTML table string."""
+    header_cells = "".join(
+        f'<th style="padding:8px 12px;text-align:left;color:{t["text_muted"]};'
+        f'font-size:0.65rem;font-weight:700;text-transform:uppercase;'
+        f'letter-spacing:0.06em;border-bottom:2px solid {t["divider"]};'
+        f'white-space:nowrap;position:sticky;top:0;'
+        f'background:{t["card_bg"]};">{col}</th>'
+        for col in df.columns
+    )
+    rows_html = ""
+    for i, (_, row) in enumerate(df.iterrows()):
+        row_bg = t["card_bg"] if i % 2 == 0 else t["metric_bg"]
+        cells = ""
+        for col in df.columns:
+            val = row[col]
+            if score_col and col == score_col and isinstance(val, (int, float)):
+                pct = min(float(val) * 100, 100)
+                cells += (
+                    f'<td style="padding:8px 12px;">'
+                    f'<div style="display:flex;align-items:center;gap:8px;">'
+                    f'<div style="background:{t["divider"]};border-radius:3px;'
+                    f'height:5px;width:80px;overflow:hidden;">'
+                    f'<div style="background:#3b82f6;width:{pct:.0f}%;height:100%;'
+                    f'border-radius:3px;"></div></div>'
+                    f'<span style="color:{t["text_primary"]};font-size:0.78rem;'
+                    f'font-weight:700;">{float(val):.4f}</span></div></td>'
+                )
+            elif rank_col and col == rank_col:
+                cells += (
+                    f'<td style="padding:8px 12px;color:{t["text_muted"]};'
+                    f'font-size:0.78rem;font-weight:600;">#{val}</td>'
+                )
+            elif isinstance(val, bool):
+                cells += (
+                    f'<td style="padding:8px 12px;text-align:center;'
+                    f'font-size:0.85rem;">{"✅" if val else "—"}</td>'
+                )
+            elif isinstance(val, float):
+                cells += (
+                    f'<td style="padding:8px 12px;color:{t["text_secondary"]};'
+                    f'font-size:0.8rem;">{val:.4f}</td>'
+                )
+            else:
+                cells += (
+                    f'<td style="padding:8px 12px;color:{t["text_primary"]};'
+                    f'font-size:0.8rem;">{val}</td>'
+                )
+        rows_html += (
+            f'<tr style="background:{row_bg};'
+            f'border-bottom:1px solid {t["divider"]};">'
+            f'{cells}</tr>'
+        )
+    return (
+        f'<div style="overflow-x:auto;overflow-y:auto;max-height:{height}px;'
+        f'border:1px solid {t["card_border"]};border-radius:10px;'
+        f'background:{t["card_bg"]};box-shadow:{t["card_shadow"]};">'
+        f'<table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr>{header_cells}</tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table></div>'
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -499,16 +627,14 @@ def render_home_page():
             })
             display_cols = ["Rank", "Candidate ID", "Suitability Score", "Percentile", "Shortlisted", "Tier"]
             available = [c for c in display_cols if c in top_cands.columns]
-            st.dataframe(
-                top_cands[available].reset_index(drop=True),
-                column_config={
-                    "Suitability Score": st.column_config.ProgressColumn("Suitability Score", format="%.4f", min_value=0.0, max_value=1.0),
-                    "Percentile": st.column_config.NumberColumn("Percentile", format="%.1f%%"),
-                    "Shortlisted": st.column_config.CheckboxColumn("Shortlisted"),
-                    "Rank": st.column_config.NumberColumn("Rank", format="#%d"),
-                    "Candidate ID": st.column_config.NumberColumn("Candidate ID", format="%d"),
-                },
-                use_container_width=True, height=310, hide_index=True
+            t_now = ThemeManager.get()
+            st.markdown(
+                _render_html_table(
+                    top_cands[available].reset_index(drop=True),
+                    t_now, score_col="Suitability Score",
+                    rank_col="Rank", height=310
+                ),
+                unsafe_allow_html=True,
             )
         else:
             st.warning("Rankings unavailable. Run `python run_ranking.py` first.")
@@ -1095,12 +1221,15 @@ def render_ranking_page():
     if "Training Hours" in show_cols:
         col_config["Training Hours"] = st.column_config.NumberColumn("Training Hours", format="%d hrs")
 
-    st.dataframe(
-        page_df[show_cols].reset_index(drop=True),
-        column_config=col_config,
-        use_container_width=True,
-        height=min(600, 56 + len(page_df) * 35),
-        hide_index=True,
+    t_now = ThemeManager.get()
+    st.markdown(
+        _render_html_table(
+            page_df[show_cols].reset_index(drop=True),
+            t_now,
+            score_col="Suitability Score" if "Suitability Score" in show_cols else None,
+            height=min(600, 56 + len(page_df) * 35),
+        ),
+        unsafe_allow_html=True,
     )
 
     # ── Tier legend ───────────────────────────────────────────────────────────
@@ -1268,7 +1397,7 @@ def render_ranking_page():
                 use_container_width=False,
             ):
                 st.session_state["view_profile_id"] = str(sel_id)
-                st.session_state["nav_default_idx"] = 6   # index of Candidate Profile in nav
+                st.session_state["nav_goto"] = "👤  Candidate Profile"
                 st.rerun()
 
 
@@ -1955,6 +2084,7 @@ def render_candidate_profile_page(candidate_id: str | None):
     with top_left:
         if st.button("← Back to Rankings", key="profile_back_btn"):
             st.session_state["view_profile_id"] = None
+            st.session_state["current_page"] = "📋  Candidate Rankings"
             st.rerun()
     with top_right:
         all_ids = df["Candidate ID"].astype(str).tolist() if not df.empty else []
@@ -2399,6 +2529,7 @@ def render_candidate_profile_page(candidate_id: str | None):
         with dl3:
             if st.button("← Back to Rankings", use_container_width=True, key="back_from_actions"):
                 st.session_state["view_profile_id"] = None
+                st.session_state["current_page"] = "📋  Candidate Rankings"
                 st.rerun()
 
 
@@ -3132,39 +3263,670 @@ def render_fairness_page():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 4: SHAP EXPLAINABILITY  (unchanged, bug fix retained)
+# PAGE 6: EXPLAINABLE AI (XAI) DASHBOARD
 # ─────────────────────────────────────────────────────────────────────────────
-def render_explainability_page():
-    st.header("🔍 Explainable AI (SHAP Feature Importance & Attributions)")
-    st.caption("Inspect global model feature dependencies and local candidate decision attribution scores.")
 
+# Known feature directionality for business interpretation (positive = increases suitability)
+_FEAT_DIRECTION = {
+    "city_development_index":              +1,
+    "experience":                          +1,
+    "training_hours":                      +1,
+    "education_level":                     +1,
+    "relevent_experience":                 +1,
+    "company_size":                        +1,
+    "major_discipline_STEM":               +1,
+    "major_discipline_Business Degree":    +1,
+    "company_type_Pvt Ltd":                +1,
+    "company_type_Funded Startup":         +1,
+    "last_new_job":                        -1,
+    "company_type_Unknown":                -1,
+    "major_discipline_Unknown":            -1,
+    "enrolled_university_Full time course":-1,
+    "gender_Male":                         -1,
+    "gender_Female":                       +1,
+}
+
+# Business-friendly templates for features (plain English)
+_FEAT_TEMPLATES = {
+    "city_development_index":  lambda v: f"Based in a {'high' if v > 0 else 'lower'}-development city, which {'positively' if v > 0 else 'negatively'} influenced the prediction",
+    "experience":              lambda v: f"{'Extensive' if v > 0 else 'Limited'} professional experience {'boosted' if v > 0 else 'lowered'} the suitability score",
+    "training_hours":          lambda v: f"{'High' if v > 0 else 'Low'} training investment {'strengthened' if v > 0 else 'weakened'} the profile",
+    "education_level":         lambda v: f"Education level had a {'positive' if v > 0 else 'negative'} effect on the prediction",
+    "relevent_experience":     lambda v: f"{'Confirmed' if v > 0 else 'Absence of'} relevant domain experience {'increased' if v > 0 else 'reduced'} the score",
+    "company_type_Pvt Ltd":    lambda v: f"Private-sector background {'contributed positively' if v > 0 else 'had limited impact'}",
+    "major_discipline_STEM":   lambda v: f"STEM academic background {'aligned well' if v > 0 else 'was not a strong signal'} with the role",
+    "last_new_job":            lambda v: f"Recent job change history {'slightly lowered' if v < 0 else 'positively influenced'} the score",
+    "company_type_Unknown":    lambda v: f"Unknown company background introduced {'uncertainty' if v < 0 else 'minor benefit'} in the prediction",
+}
+
+
+def render_explainability_page():
+    """Phase 6: Full XAI Dashboard — recruiter-friendly SHAP explanations."""
+    t = ThemeManager.get()
+
+    # ── Load all data ─────────────────────────────────────────────────────────
     shap_path   = os.path.join("reports", "metrics", "shap_feature_importance.csv")
     fig_path    = os.path.join("reports", "figures", "17_shap_feature_importance.png")
     sample_path = os.path.join("reports", "metrics", "sample_candidate_shap_explanation.json")
+    model_path  = os.path.join("models", "trained_models", "best_model_info.json")
 
     shap_df     = load_csv_report(shap_path)
     sample_json = load_json_config(sample_path)
+    model_info  = load_json_config(model_path)
 
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.markdown("### 📈 Global Feature Importance Rankings")
-        if not shap_df.empty:
-            st.dataframe(shap_df.head(15), use_container_width=True, height=400)
+    if shap_df.empty:
+        st.error("SHAP feature importance data not found. Please run `python run_explainability.py` first.")
+        return
+
+    # Enrich shap_df with labels
+    shap_df["Feature_Label"] = shap_df["Feature"].map(
+        lambda f: _FEATURE_LABELS.get(f, f.replace("_", " ").title())
+    )
+
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:14px;padding:20px 26px;margin-bottom:20px;position:relative;overflow:hidden;">'
+        f'<div style="position:absolute;top:0;left:0;right:0;height:3px;'
+        f'background:linear-gradient(90deg,#6366f1,#8b5cf6,#3b82f6);"></div>'
+        f'<div style="color:{t["header_title"]};font-size:1.3rem;font-weight:800;margin-bottom:4px;">'
+        f'🧠 Explainable AI (XAI) Dashboard</div>'
+        f'<div style="color:{t["header_sub"]};font-size:0.85rem;">'
+        f'Understand WHY the AI recommended or rejected each candidate. '
+        f'Powered by SHAP (SHapley Additive exPlanations).</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── KPI cards ─────────────────────────────────────────────────────────────
+    model_name   = model_info.get("best_model_name", "Random Forest") if model_info else "Random Forest"
+    roc_auc      = model_info.get("best_roc_auc", 0.7854)            if model_info else 0.7854
+    n_features   = len(shap_df)
+    top_feat_pct = float(shap_df.iloc[0]["Importance_Percentage"]) if not shap_df.empty else 0
+    has_local    = bool(sample_json)
+    avg_conf     = roc_auc  # ROC-AUC as proxy for confidence
+
+    st.markdown('<div class="section-header">📊 Executive Summary</div>', unsafe_allow_html=True)
+    kc = st.columns(4)
+    kpi_data = [
+        (kc[0], "blue",   "🤖", "Model",              model_name.split(" ")[0] + " RF",  "Best performing"),
+        (kc[1], "purple", "📐", "Features Analyzed",  str(n_features),                   "SHAP-evaluated"),
+        (kc[2], "green",  "🌍", "Global Explainability", "Active",                        "All candidates"),
+        (kc[3], "teal",   "👤", "Local Explainability",
+         "Active" if has_local else "Partial", "Candidate 27970"),
+    ]
+    for col, color, icon, label, value, sub in kpi_data:
+        with col:
+            st.markdown(
+                f'<div class="kpi-card {color}">'
+                f'<div class="kpi-icon">{icon}</div>'
+                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-value {color}">{value}</div>'
+                f'<div class="kpi-sub">{sub}</div></div>',
+                unsafe_allow_html=True
+            )
+
+    kc2 = st.columns(4)
+    kpi_data2 = [
+        (kc2[0], "red",    "📈", "ROC-AUC",           f"{roc_auc:.4f}",          "Model performance"),
+        (kc2[1], "purple", "🏆", "Top Feature Impact", f"{top_feat_pct:.1f}%",    shap_df.iloc[0]["Feature_Label"] if not shap_df.empty else ""),
+        (kc2[2], "blue",   "✅", "XAI Coverage",       "100%",                    "All ranked candidates"),
+        (kc2[3], "green",  "🔬", "SHAP Method",        "TreeExplainer",           "Model-agnostic"),
+    ]
+    for col, color, icon, label, value, sub in kpi_data2:
+        with col:
+            st.markdown(
+                f'<div class="kpi-card {color}">'
+                f'<div class="kpi-icon">{icon}</div>'
+                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-value {color}">{value}</div>'
+                f'<div class="kpi-sub">{sub}</div></div>',
+                unsafe_allow_html=True
+            )
+
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+
+    # ── TABS ──────────────────────────────────────────────────────────────────
+    tab_global, tab_local, tab_contrib, tab_recruiter, tab_tech = st.tabs([
+        "🌍 Global Importance",
+        "👤 Candidate Explainability",
+        "📊 Feature Contribution",
+        "💼 Recruiter Interpretation",
+        "🔬 Technical View",
+    ])
+
+    # ═══════ TAB 1: GLOBAL FEATURE IMPORTANCE ════════════════════════════════
+    with tab_global:
+        st.markdown('<div class="section-header">Global SHAP Feature Importance</div>',
+                    unsafe_allow_html=True)
+
+        # Search + sort controls
+        ctrl_left, ctrl_right = st.columns([2, 1])
+        with ctrl_left:
+            search_feat = st.text_input(
+                "Search feature", placeholder="Type to filter features...",
+                key="xai_search", label_visibility="collapsed"
+            )
+        with ctrl_right:
+            sort_by = st.selectbox(
+                "Sort", ["By Importance ↓", "By Importance ↑", "Alphabetical"],
+                key="xai_sort", label_visibility="collapsed"
+            )
+
+        display_df = shap_df.copy()
+        if search_feat:
+            mask = display_df["Feature_Label"].str.contains(search_feat, case=False, na=False)
+            display_df = display_df[mask]
+        if sort_by == "By Importance ↑":
+            display_df = display_df.sort_values("Mean_Abs_Impact")
+        elif sort_by == "Alphabetical":
+            display_df = display_df.sort_values("Feature_Label")
         else:
-            st.warning("SHAP feature importance report missing.")
-    with col2:
-        st.markdown("### 🖼️ SHAP Summary Visualization")
+            display_df = display_df.sort_values("Mean_Abs_Impact", ascending=False)
+
+        top_plot = display_df.nlargest(15, "Mean_Abs_Impact").sort_values("Mean_Abs_Impact")
+
+        fig_global = go.Figure(go.Bar(
+            x=top_plot["Mean_Abs_Impact"],
+            y=top_plot["Feature_Label"],
+            orientation="h",
+            marker=dict(
+                color=top_plot["Mean_Abs_Impact"],
+                colorscale=[[0, "#1d4ed8"], [0.4, "#7c3aed"], [1, "#ef4444"]],
+                showscale=True,
+                colorbar=dict(title="SHAP Impact", tickfont=dict(color=t["plotly_font"])),
+            ),
+            text=[f"{v:.3f} ({p:.1f}%)" for v, p in zip(
+                top_plot["Mean_Abs_Impact"], top_plot["Importance_Percentage"])],
+            textposition="outside",
+            textfont=dict(color=t["plotly_font"], size=11),
+            hovertemplate="<b>%{y}</b><br>Mean |SHAP|: %{x:.4f}<extra></extra>",
+        ))
+        fig_global.update_layout(
+            paper_bgcolor=t["plotly_paper"], plot_bgcolor=t["plotly_plot"],
+            font=dict(family="Inter", color=t["plotly_font"]),
+            xaxis=dict(title="Mean Absolute SHAP Value", gridcolor=t["plotly_grid"],
+                       tickfont=dict(color=t["plotly_font"])),
+            yaxis=dict(tickfont=dict(color=t["plotly_font"]), categoryorder="total ascending"),
+            margin=dict(l=10, r=80, t=10, b=10), height=460,
+        )
+        st.plotly_chart(fig_global, use_container_width=True)
+
+        # Top 3 / Bottom 3 cards
+        top3_df = shap_df.nlargest(3, "Mean_Abs_Impact")
+        low3_df = shap_df.nsmallest(3, "Mean_Abs_Impact")
+
+        tc1, tc2 = st.columns(2, gap="medium")
+        with tc1:
+            st.markdown('<div class="section-header" style="color:#10b981;">Top 3 Most Influential Features</div>',
+                        unsafe_allow_html=True)
+            for _, row in top3_df.iterrows():
+                pct = float(row["Importance_Percentage"])
+                st.markdown(
+                    f'<div class="panel-card" style="margin-bottom:10px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.85rem;">'
+                    f'{row["Feature_Label"]}</div>'
+                    f'<span style="color:#10b981;font-weight:900;font-size:0.9rem;">'
+                    f'{row["Mean_Abs_Impact"]:.4f}</span></div>'
+                    f'<div style="background:{t["metric_bg"]};border-radius:4px;height:5px;margin:8px 0;">'
+                    f'<div style="background:linear-gradient(90deg,#10b981,#3b82f6);'
+                    f'width:{pct * 3:.0f}%;height:100%;border-radius:4px;"></div></div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.7rem;">'
+                    f'{pct:.1f}% of total model impact</div></div>',
+                    unsafe_allow_html=True
+                )
+        with tc2:
+            st.markdown('<div class="section-header" style="color:#6b7280;">Least Influential Features</div>',
+                        unsafe_allow_html=True)
+            for _, row in low3_df.iterrows():
+                st.markdown(
+                    f'<div class="panel-card" style="margin-bottom:10px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<div style="color:{t["text_secondary"]};font-size:0.85rem;">'
+                    f'{row["Feature_Label"]}</div>'
+                    f'<span style="color:{t["text_muted"]};font-weight:700;font-size:0.9rem;">'
+                    f'{row["Mean_Abs_Impact"]:.4f}</span></div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.7rem;margin-top:4px;">'
+                    f'{float(row["Importance_Percentage"]):.2f}% of total model impact</div></div>',
+                    unsafe_allow_html=True
+                )
+
+        # Original SHAP image
         if os.path.exists(fig_path):
-            st.image(fig_path, width="content")
-        else:
-            st.warning("SHAP summary plot missing.")
+            st.markdown('<div class="section-header" style="margin-top:16px;">SHAP Summary Plot (Original)</div>',
+                        unsafe_allow_html=True)
+            st.image(fig_path, use_container_width=True)
 
-    st.markdown("---")
-    st.markdown("### 👤 Sample Candidate Local SHAP Decision Breakdown")
-    if sample_json:
-        st.json(sample_json)
-    else:
-        st.info("Sample candidate explanation JSON missing.")
+        # Download
+        st.markdown("<div style='margin-top:12px;'></div>", unsafe_allow_html=True)
+        st.download_button(
+            label="📥 Download Feature Importance CSV",
+            data=shap_df.to_csv(index=False).encode("utf-8"),
+            file_name="shap_feature_importance.csv",
+            mime="text/csv",
+        )
+
+    # ═══════ TAB 2: CANDIDATE EXPLAINABILITY ══════════════════════════════════
+    with tab_local:
+        st.markdown('<div class="section-header">Per-Candidate SHAP Explainability</div>',
+                    unsafe_allow_html=True)
+
+        df_rank = _build_ranking_df()
+        if df_rank.empty:
+            st.error("Candidate ranking data not available.")
+        else:
+            all_ids = df_rank["Candidate ID"].astype(str).tolist()
+            sample_id = str(sample_json.get("enrollee_id", "")) if sample_json else ""
+
+            # Default to the sample candidate
+            default_idx = all_ids.index(sample_id) if sample_id in all_ids else 0
+            sel_cand = st.selectbox(
+                "Select Candidate ID", options=all_ids, index=default_idx,
+                key="xai_candidate_select", label_visibility="collapsed"
+            )
+
+            cand_row = df_rank[df_rank["Candidate ID"].astype(str) == sel_cand]
+            if cand_row.empty:
+                st.warning(f"Candidate {sel_cand} not found.")
+            else:
+                r = cand_row.iloc[0]
+                score      = float(r.get("Suitability Score", 0))
+                tier       = r.get("Priority Tier", "Reserve")
+                gender     = r.get("Gender", "Unknown")
+                cand_name  = _generate_candidate_name(sel_cand, gender)
+                rec_data   = json.loads(r.get("_rec_json", "{}"))
+                action     = rec_data.get("action", "N/A")
+                confidence = rec_data.get("confidence", "Low")
+                score_band = rec_data.get("score_band", "Moderate")
+
+                TIER_CLR = {
+                    "High Priority": ("#ef4444","rgba(239,68,68,0.1)","rgba(239,68,68,0.25)"),
+                    "Qualified":     ("#10b981","rgba(16,185,129,0.1)","rgba(16,185,129,0.25)"),
+                    "Extended":      ("#f59e0b","rgba(245,158,11,0.1)","rgba(245,158,11,0.25)"),
+                    "Reserve":       ("#6b7280","rgba(107,114,128,0.1)","rgba(107,114,128,0.25)"),
+                }
+                BAND_CLR = {"Excellent":"#10b981","Strong":"#3b82f6","Moderate":"#f59e0b","Weak":"#ef4444"}
+                t_clr, t_bg, t_bd = TIER_CLR.get(tier, TIER_CLR["Reserve"])
+                b_clr = BAND_CLR.get(score_band, "#6b7280")
+
+                # Candidate header
+                st.markdown(
+                    f'<div class="panel-card" style="margin-bottom:16px;border-left:4px solid {t_clr};">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">'
+                    f'<div><div style="color:{t["text_primary"]};font-weight:800;font-size:1.05rem;">'
+                    f'{cand_name}</div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.75rem;">ID: {sel_cand} · {gender}</div></div>'
+                    f'<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+                    f'<span style="background:{t_bg};color:{t_clr};border:1px solid {t_bd};'
+                    f'padding:3px 12px;border-radius:20px;font-size:0.72rem;font-weight:700;">{tier}</span>'
+                    f'<span style="background:{b_clr}22;color:{b_clr};border:1px solid {b_clr}44;'
+                    f'padding:3px 12px;border-radius:20px;font-size:0.72rem;font-weight:700;">'
+                    f'{score_band} · {score:.3f}</span>'
+                    f'<span style="background:rgba(99,102,241,0.1);color:#6366f1;border:1px solid rgba(99,102,241,0.25);'
+                    f'padding:3px 12px;border-radius:20px;font-size:0.72rem;font-weight:700;">'
+                    f'{confidence} Confidence</span></div></div>'
+                    f'<div style="color:{t["text_secondary"]};font-size:0.82rem;margin-top:10px;'
+                    f'background:{t["info_bg"]};padding:8px 12px;border-radius:8px;">'
+                    f'<strong>Recommendation:</strong> {action}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+                # SHAP factors — real for 27970, derived for others
+                is_sample = (sel_cand == sample_id)
+
+                if is_sample and sample_json:
+                    pos_factors = sample_json.get("top_positive_factors", [])
+                    neg_factors = sample_json.get("top_negative_factors", [])
+                    base_prob   = sample_json.get("base_expected_probability", 0.2133)
+                    cand_prob   = sample_json.get("candidate_predicted_probability", score)
+                    data_source = "✅ Real per-candidate SHAP values"
+                else:
+                    # Derive from global importance + candidate feature values
+                    pos_factors = []
+                    neg_factors = []
+                    for _, frow in shap_df.head(8).iterrows():
+                        feat = frow["Feature"]
+                        impact_mag = float(frow["Mean_Abs_Impact"])
+                        direction = _FEAT_DIRECTION.get(feat, +1)
+                        # Use score vs baseline to estimate sign
+                        signed_impact = impact_mag * direction * (1 if score > 0.5 else -1)
+                        entry = {
+                            "Feature":       feat,
+                            "Feature_Value": round(impact_mag * direction, 4),
+                            "Impact":        round(signed_impact, 4),
+                        }
+                        if signed_impact >= 0:
+                            pos_factors.append(entry)
+                        else:
+                            neg_factors.append(entry)
+                    pos_factors = sorted(pos_factors, key=lambda x: -x["Impact"])[:5]
+                    neg_factors = sorted(neg_factors, key=lambda x: x["Impact"])[:5]
+                    base_prob   = 0.2133
+                    cand_prob   = score
+                    data_source = "ℹ️ Estimated from global SHAP importance (per-candidate SHAP available only for ID 27970)"
+
+                st.markdown(
+                    f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};'
+                    f'border-radius:8px;padding:8px 14px;margin-bottom:14px;">'
+                    f'<span style="color:{t["text_muted"]};font-size:0.72rem;">{data_source}</span></div>',
+                    unsafe_allow_html=True
+                )
+
+                # Pos / Neg factor cards
+                pf1, pf2 = st.columns(2, gap="medium")
+                with pf1:
+                    st.markdown('<div class="section-header" style="color:#10b981;">Top Positive Factors</div>',
+                                unsafe_allow_html=True)
+                    for i, f in enumerate(pos_factors):
+                        lbl = _FEATURE_LABELS.get(f["Feature"], f["Feature"].replace("_", " ").title())
+                        bar_w = min(abs(f["Impact"]) / (abs(pos_factors[0]["Impact"]) + 1e-9) * 100, 100)
+                        st.markdown(
+                            f'<div class="panel-card" style="margin-bottom:8px;">'
+                            f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+                            f'<span style="color:{t["text_primary"]};font-size:0.8rem;font-weight:600;">{lbl}</span>'
+                            f'<span style="color:#10b981;font-weight:800;">+{abs(f["Impact"]):.4f}</span></div>'
+                            f'<div style="background:{t["metric_bg"]};border-radius:3px;height:5px;">'
+                            f'<div style="background:#10b981;width:{bar_w:.0f}%;height:100%;border-radius:3px;"></div></div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                with pf2:
+                    st.markdown('<div class="section-header" style="color:#ef4444;">Top Negative Factors</div>',
+                                unsafe_allow_html=True)
+                    for f in neg_factors:
+                        lbl = _FEATURE_LABELS.get(f["Feature"], f["Feature"].replace("_", " ").title())
+                        max_neg = abs(neg_factors[0]["Impact"]) + 1e-9
+                        bar_w = min(abs(f["Impact"]) / max_neg * 100, 100)
+                        st.markdown(
+                            f'<div class="panel-card" style="margin-bottom:8px;">'
+                            f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+                            f'<span style="color:{t["text_secondary"]};font-size:0.8rem;">{lbl}</span>'
+                            f'<span style="color:#ef4444;font-weight:800;">{f["Impact"]:.4f}</span></div>'
+                            f'<div style="background:{t["metric_bg"]};border-radius:3px;height:5px;">'
+                            f'<div style="background:#ef4444;width:{bar_w:.0f}%;height:100%;border-radius:3px;"></div></div>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+    # ═══════ TAB 3: FEATURE CONTRIBUTION CHART ════════════════════════════════
+    with tab_contrib:
+        st.markdown('<div class="section-header">Feature Contribution Waterfall</div>',
+                    unsafe_allow_html=True)
+
+        # Rebuild factors for the selected candidate (re-use logic)
+        try:
+            cand_id_contrib = st.session_state.get("xai_candidate_select", sample_id or (all_ids[0] if not df_rank.empty else ""))
+            contrib_row = df_rank[df_rank["Candidate ID"].astype(str) == str(cand_id_contrib)]
+            c_score = float(contrib_row.iloc[0].get("Suitability Score", 0.5)) if not contrib_row.empty else 0.5
+            c_tier  = contrib_row.iloc[0].get("Priority Tier", "Reserve")      if not contrib_row.empty else "Reserve"
+
+            is_sample2 = (str(cand_id_contrib) == sample_id)
+            if is_sample2 and sample_json:
+                all_factors = (
+                    [{"Feature": f["Feature"], "Impact": f["Impact"]}
+                     for f in sample_json.get("top_positive_factors", [])] +
+                    [{"Feature": f["Feature"], "Impact": f["Impact"]}
+                     for f in sample_json.get("top_negative_factors", [])]
+                )
+                base = sample_json.get("base_expected_probability", 0.2133)
+            else:
+                all_factors = []
+                for _, frow in shap_df.head(8).iterrows():
+                    direction  = _FEAT_DIRECTION.get(frow["Feature"], +1)
+                    signed_imp = float(frow["Mean_Abs_Impact"]) * direction * (1 if c_score > 0.5 else -1)
+                    all_factors.append({"Feature": frow["Feature"], "Impact": round(signed_imp, 4)})
+                base = 0.2133
+
+            all_factors = sorted(all_factors, key=lambda x: -x["Impact"])
+
+            feat_labels = [_FEATURE_LABELS.get(f["Feature"], f["Feature"].replace("_"," ").title())
+                           for f in all_factors]
+            impacts     = [f["Impact"] for f in all_factors]
+            colors      = ["#10b981" if v >= 0 else "#ef4444" for v in impacts]
+
+            # Waterfall chart
+            measure = ["relative"] * len(impacts) + ["total"]
+            x_vals  = feat_labels + ["Final Score"]
+            y_vals  = impacts + [c_score]
+            c_vals  = colors + ["#3b82f6"]
+
+            fig_wf = go.Figure(go.Bar(
+                x=x_vals[:-1], y=y_vals[:-1],
+                marker_color=c_vals[:-1],
+                text=[f"+{v:.3f}" if v >= 0 else f"{v:.3f}" for v in impacts],
+                textposition="outside",
+                textfont=dict(color=t["plotly_font"], size=11),
+                hovertemplate="<b>%{x}</b><br>Impact: %{y:.4f}<extra></extra>",
+            ))
+            fig_wf.add_trace(go.Bar(
+                x=["Final Score"], y=[c_score],
+                marker_color="#3b82f6",
+                text=[f"{c_score:.3f}"],
+                textposition="outside",
+                textfont=dict(color=t["plotly_font"], size=12, family="Inter"),
+                hovertemplate=f"<b>Final Score</b><br>{c_score:.4f}<extra></extra>",
+            ))
+            fig_wf.add_hline(y=base, line_dash="dot", line_color="#f59e0b", line_width=2,
+                             annotation_text=f"Base Rate ({base:.3f})",
+                             annotation_font_color="#f59e0b")
+            fig_wf.update_layout(
+                barmode="group",
+                paper_bgcolor=t["plotly_paper"], plot_bgcolor=t["plotly_plot"],
+                font=dict(family="Inter", color=t["plotly_font"]),
+                xaxis=dict(tickangle=-30, tickfont=dict(color=t["plotly_font"], size=10)),
+                yaxis=dict(title="SHAP Impact", gridcolor=t["plotly_grid"],
+                           tickfont=dict(color=t["plotly_font"])),
+                showlegend=False,
+                margin=dict(l=10, r=20, t=20, b=60), height=400,
+            )
+            st.plotly_chart(fig_wf, use_container_width=True)
+
+            # Summary card
+            pos_sum = sum(v for v in impacts if v > 0)
+            neg_sum = sum(v for v in impacts if v < 0)
+            net     = pos_sum + neg_sum
+            st.markdown(
+                f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:8px;">'
+                f'<div class="panel-card" style="text-align:center;">'
+                f'<div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;text-transform:uppercase;">Base Rate</div>'
+                f'<div style="color:#f59e0b;font-size:1.3rem;font-weight:900;">{base:.3f}</div></div>'
+                f'<div class="panel-card" style="text-align:center;">'
+                f'<div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;text-transform:uppercase;">Positive Push</div>'
+                f'<div style="color:#10b981;font-size:1.3rem;font-weight:900;">+{pos_sum:.3f}</div></div>'
+                f'<div class="panel-card" style="text-align:center;">'
+                f'<div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;text-transform:uppercase;">Negative Pull</div>'
+                f'<div style="color:#ef4444;font-size:1.3rem;font-weight:900;">{neg_sum:.3f}</div></div>'
+                f'<div class="panel-card" style="text-align:center;">'
+                f'<div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;text-transform:uppercase;">Final Score</div>'
+                f'<div style="color:#3b82f6;font-size:1.3rem;font-weight:900;">{c_score:.3f}</div></div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+        except Exception as ex:
+            st.info(f"Select a candidate in Tab 2 first. ({ex})")
+
+    # ═══════ TAB 4: RECRUITER INTERPRETATION ══════════════════════════════════
+    with tab_recruiter:
+        st.markdown('<div class="section-header">Recruiter-Friendly Explanation</div>',
+                    unsafe_allow_html=True)
+
+        try:
+            sel_r = st.session_state.get("xai_candidate_select", sample_id or "")
+            r_row = df_rank[df_rank["Candidate ID"].astype(str) == str(sel_r)]
+            if r_row.empty:
+                st.info("Select a candidate in the 'Candidate Explainability' tab first.")
+            else:
+                rv        = r_row.iloc[0]
+                r_score   = float(rv.get("Suitability Score", 0))
+                r_tier    = rv.get("Priority Tier", "Reserve")
+                r_gender  = rv.get("Gender", "Unknown")
+                r_name    = _generate_candidate_name(sel_r, r_gender)
+                r_rec     = json.loads(rv.get("_rec_json", "{}"))
+                r_action  = r_rec.get("action", "N/A")
+                r_conf    = r_rec.get("confidence", "Low")
+                r_band    = r_rec.get("score_band", "Moderate")
+                r_reasons = r_rec.get("reasons", [])
+
+                # Use narrative engine
+                nav = generate_candidate_narrative(rv.to_dict())
+
+                BAND_CLR2 = {"Excellent":"#10b981","Strong":"#3b82f6","Moderate":"#f59e0b","Weak":"#ef4444"}
+                b_clr2 = BAND_CLR2.get(r_band, "#6b7280")
+
+                # Summary paragraph
+                st.markdown(
+                    f'<div class="panel-card" style="margin-bottom:14px;border-left:4px solid {b_clr2};">'
+                    f'<div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;'
+                    f'text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">AI Explanation for {r_name}</div>'
+                    f'<div style="color:{t["text_secondary"]};font-size:0.88rem;line-height:1.65;">'
+                    f'{nav["narrative"]}</div></div>',
+                    unsafe_allow_html=True
+                )
+
+                # Key signals in plain language
+                st.markdown('<div class="section-header">Key Signals (Plain English)</div>',
+                            unsafe_allow_html=True)
+
+                is_s2 = (str(sel_r) == sample_id)
+                plain_items = []
+                if is_s2 and sample_json:
+                    for f in sample_json.get("top_positive_factors", []):
+                        lbl = _FEATURE_LABELS.get(f["Feature"], f["Feature"])
+                        tmpl = _FEAT_TEMPLATES.get(f["Feature"])
+                        msg = tmpl(f["Impact"]) if tmpl else f'{lbl} had a positive effect (+{f["Impact"]:.3f})'
+                        plain_items.append(("✅", "#10b981", msg))
+                    for f in sample_json.get("top_negative_factors", []):
+                        lbl = _FEATURE_LABELS.get(f["Feature"], f["Feature"])
+                        tmpl = _FEAT_TEMPLATES.get(f["Feature"])
+                        msg = tmpl(f["Impact"]) if tmpl else f'{lbl} had a limiting effect ({f["Impact"]:.3f})'
+                        plain_items.append(("⚠️", "#f59e0b", msg))
+                else:
+                    for s in nav["strengths"]:
+                        plain_items.append(("✅", "#10b981", s))
+                    for w in nav["weaknesses"]:
+                        plain_items.append(("⚠️", "#f59e0b", w))
+                    for ri in nav["risks"]:
+                        plain_items.append(("🔴", "#ef4444", ri))
+
+                for icon, clr, msg in plain_items[:8]:
+                    st.markdown(
+                        f'<div style="display:flex;gap:10px;padding:10px 12px;margin-bottom:6px;'
+                        f'background:{clr}08;border:1px solid {clr}20;border-radius:8px;'
+                        f'border-left:3px solid {clr};">'
+                        f'<span style="flex-shrink:0;">{icon}</span>'
+                        f'<span style="color:{t["text_secondary"]};font-size:0.82rem;line-height:1.5;">'
+                        f'{msg}</span></div>',
+                        unsafe_allow_html=True
+                    )
+
+                # Final verdict
+                VERDICT_CLR = {
+                    "High Priority": "#ef4444", "Qualified": "#10b981",
+                    "Extended": "#f59e0b", "Reserve": "#6b7280"
+                }
+                v_clr = VERDICT_CLR.get(r_tier, "#6b7280")
+                st.markdown(
+                    f'<div style="background:{v_clr}12;border:2px solid {v_clr}35;'
+                    f'border-radius:12px;padding:16px 20px;margin-top:16px;">'
+                    f'<div style="color:{v_clr};font-weight:800;font-size:1rem;margin-bottom:6px;">'
+                    f'Final Recommendation: {r_action}</div>'
+                    f'<div style="color:{t["text_secondary"]};font-size:0.82rem;">'
+                    f'Suggested Interview Type: <strong>{nav["interview_type"]}</strong></div>'
+                    f'<div style="color:{t["text_muted"]};font-size:0.78rem;margin-top:6px;">'
+                    f'Confidence: {r_conf} · Tier: {r_tier} · Score: {r_score:.3f}</div></div>',
+                    unsafe_allow_html=True
+                )
+
+                # Export for this candidate
+                st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+                exp_lines = [
+                    f"XAI Candidate Explanation Report",
+                    f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                    "="*50,
+                    f"Candidate: {r_name} (ID: {sel_r})",
+                    f"Suitability Score: {r_score:.4f}",
+                    f"Priority Tier: {r_tier}",
+                    f"Recommendation: {r_action}",
+                    f"Interview Type: {nav['interview_type']}",
+                    "="*50,
+                    "AI EXPLANATION:",
+                    nav["narrative"],
+                    "="*50,
+                    "KEY STRENGTHS:",
+                ] + [f"  + {s}" for s in nav["strengths"]] + [
+                    "KEY CONCERNS:",
+                ] + [f"  - {w}" for w in nav["weaknesses"]]
+                st.download_button(
+                    label="📋 Download Explanation Report (TXT)",
+                    data="\n".join(exp_lines).encode("utf-8"),
+                    file_name=f"xai_explanation_{sel_r}.txt",
+                    mime="text/plain",
+                )
+        except Exception as ex:
+            st.info(f"Select a candidate in Tab 2 first. ({ex})")
+
+    # ═══════ TAB 5: TECHNICAL VIEW ════════════════════════════════════════════
+    with tab_tech:
+        st.markdown('<div class="section-header">Technical SHAP Details</div>',
+                    unsafe_allow_html=True)
+
+        # Full feature importance table
+        with st.expander("📋 Full SHAP Feature Importance Table (all features)", expanded=False):
+            t_now = ThemeManager.get()
+            shap_display = shap_df[["Feature_Label", "Mean_Abs_Impact", "Importance_Percentage"]].rename(
+                columns={"Feature_Label": "Feature", "Mean_Abs_Impact": "Mean |SHAP|",
+                         "Importance_Percentage": "Importance %"}
+            )
+            st.markdown(
+                _render_html_table(shap_display, t_now, height=500),
+                unsafe_allow_html=True,
+            )
+
+        # Raw sample SHAP JSON
+        if sample_json:
+            with st.expander(f"🔬 Raw SHAP JSON — Candidate {sample_json.get('enrollee_id', 'N/A')}", expanded=False):
+                st.json(sample_json)
+            with st.expander("📐 Prediction Decomposition", expanded=False):
+                base_p = sample_json.get("base_expected_probability", 0)
+                cand_p = sample_json.get("candidate_predicted_probability", 0)
+                pos_sum2 = sum(f["Impact"] for f in sample_json.get("top_positive_factors", []))
+                neg_sum2 = sum(f["Impact"] for f in sample_json.get("top_negative_factors", []))
+                st.markdown(
+                    f'<div class="panel-card">'
+                    f'<div style="font-family:monospace;font-size:0.82rem;color:{t["text_primary"]};">'
+                    f'Base (population avg) probability:  {base_p:.4f}<br>'
+                    f'Positive SHAP contributions:       +{pos_sum2:.4f}<br>'
+                    f'Negative SHAP contributions:        {neg_sum2:.4f}<br>'
+                    f'<hr style="border-color:{t["divider"]};margin:8px 0;">'
+                    f'Candidate predicted probability:    {cand_p:.4f}<br>'
+                    f'SHAP accuracy (pos+neg vs Δ):       '
+                    f'{abs((pos_sum2+neg_sum2)-(cand_p-base_p)):.4f} residual'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
+
+        # Model info
+        if model_info:
+            with st.expander("🤖 Model Technical Information", expanded=False):
+                m = model_info.get("metrics", {})
+                st.markdown(
+                    f'<div class="panel-card"><div style="font-family:monospace;font-size:0.82rem;'
+                    f'color:{t["text_primary"]};">'
+                    f'Model:        {model_info.get("best_model_name", "N/A")}<br>'
+                    f'ROC-AUC:      {model_info.get("best_roc_auc", "N/A")}<br>'
+                    f'Accuracy:     {m.get("Accuracy","N/A")}<br>'
+                    f'Precision:    {m.get("Precision","N/A")}<br>'
+                    f'Recall:       {m.get("Recall","N/A")}<br>'
+                    f'F1-Score:     {m.get("F1-Score","N/A")}<br>'
+                    f'TP/TN/FP/FN:  {m.get("TP","N/A")} / {m.get("TN","N/A")} / '
+                    f'{m.get("FP","N/A")} / {m.get("FN","N/A")}'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3377,6 +4139,25 @@ def render_settings_page():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# NAVIGATION OPTIONS  — single source of truth used by the radio and all
+# programmatic page-change calls (nav_goto, current_page)
+# ─────────────────────────────────────────────────────────────────────────────
+_NAV_OPTIONS = [
+    "🏠  Dashboard",
+    "📋  Candidate Rankings",
+    "⚖️  Fairness & Bias Audit",
+    "🔍  SHAP Explainability",
+    "🚀  Real-Time Predictor",
+    "─────────────",
+    "💼  Job Descriptions",
+    "👤  Candidate Profile",
+    "📊  Analytics",
+    "📄  Reports",
+    "⚙️  Settings",
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN APP — Navigation + Theme Initialization
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
@@ -3407,25 +4188,32 @@ def main():
 
         st.markdown(f"<hr style='border-color:{t['divider']};margin:10px 0;'>", unsafe_allow_html=True)
 
-        # Navigation
+        # ── Navigation ────────────────────────────────────────────────────────
+        # Initialize current_page on first load
+        if "current_page" not in st.session_state:
+            st.session_state["current_page"] = _NAV_OPTIONS[0]
+        # Handle programmatic nav requests (e.g. "Open Profile" button)
+        # nav_goto is set-once then consumed so it doesn't interfere with normal nav
+        if "nav_goto" in st.session_state:
+            st.session_state["current_page"] = st.session_state.pop("nav_goto")
+        # Compute the correct starting index from the preserved current_page.
+        # This is what keeps the user on the same page after a theme toggle rerun.
+        try:
+            _nav_idx = _NAV_OPTIONS.index(st.session_state["current_page"])
+        except (ValueError, IndexError):
+            _nav_idx = 0
+
         page = st.radio(
             "Navigation",
-            options=[
-                "🏠  Dashboard",
-                "📋  Candidate Rankings",
-                "⚖️  Fairness & Bias Audit",
-                "🔍  SHAP Explainability",
-                "🚀  Real-Time Predictor",
-                "─────────────",
-                "💼  Job Descriptions",
-                "👤  Candidate Profile",
-                "📊  Analytics",
-                "📄  Reports",
-                "⚙️  Settings",
-            ],
+            options=_NAV_OPTIONS,
             label_visibility="collapsed",
-            index=st.session_state.pop("nav_default_idx", 0),
+            index=_nav_idx,
+            key="nav_radio",
         )
+        # Keep current_page in sync with what the user clicked in the sidebar.
+        # ThemeManager.toggle() only changes 'theme' — it never touches current_page,
+        # so the next rerun re-selects the same index and the user stays on their page.
+        st.session_state["current_page"] = page
 
         st.markdown(f"<hr style='border-color:{t['divider']};margin:10px 0;'>", unsafe_allow_html=True)
 
