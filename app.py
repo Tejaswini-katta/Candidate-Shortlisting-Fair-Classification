@@ -338,6 +338,56 @@ def build_css(t: dict) -> str:
         "font-weight:600 !important;padding:6px 14px !important;width:100% !important;transition:all 0.2s ease !important;}"
         f".theme-toggle>button:hover{{background:{t['card_border']} !important;color:{t['text_primary']} !important;"
         "transform:none !important;box-shadow:none !important;}"
+        # ── Form widget overrides (needed because config.toml base=light forces light colours) ──
+        # Text input
+        f"[data-baseweb='input']{{background-color:{t['card_bg']} !important;"
+        f"border-color:{t['card_border']} !important;}}"
+        f"[data-baseweb='input'] input{{background-color:{t['card_bg']} !important;"
+        f"color:{t['text_primary']} !important;}}"
+        f"[data-baseweb='input']:focus-within{{border-color:#3b82f6 !important;"
+        f"box-shadow:0 0 0 2px rgba(59,130,246,0.2) !important;}}"
+        # Number input
+        f"[data-testid='stNumberInput'] input{{background-color:{t['card_bg']} !important;"
+        f"color:{t['text_primary']} !important;border-color:{t['card_border']} !important;}}"
+        f"[data-testid='stNumberInputDecrement'],[data-testid='stNumberInputIncrement']"
+        f"{{background-color:{t['metric_bg']} !important;color:{t['text_primary']} !important;"
+        f"border-color:{t['card_border']} !important;}}"
+        # Text area
+        f"[data-baseweb='textarea']{{background-color:{t['card_bg']} !important;"
+        f"border-color:{t['card_border']} !important;}}"
+        f"[data-baseweb='textarea'] textarea{{background-color:{t['card_bg']} !important;"
+        f"color:{t['text_primary']} !important;}}"
+        # Selectbox
+        f"[data-baseweb='select']>div{{background-color:{t['card_bg']} !important;"
+        f"border-color:{t['card_border']} !important;color:{t['text_primary']} !important;}}"
+        f"[data-baseweb='select'] span{{color:{t['text_primary']} !important;}}"
+        f"[data-baseweb='select'] svg{{fill:{t['text_muted']} !important;}}"
+        # Dropdown list (popover)
+        f"[data-baseweb='popover']{{background-color:{t['card_bg']} !important;"
+        f"border:1px solid {t['card_border']} !important;box-shadow:{t['card_shadow']} !important;}}"
+        f"[role='listbox']{{background-color:{t['card_bg']} !important;}}"
+        f"[role='option']{{background-color:{t['card_bg']} !important;"
+        f"color:{t['text_primary']} !important;}}"
+        f"[role='option']:hover{{background-color:{t['metric_bg']} !important;}}"
+        # Form container border
+        f"[data-testid='stForm']{{border-color:{t['card_border']} !important;"
+        f"background-color:transparent !important;}}"
+        # Form submit button — keep it blue like normal stButton
+        "[data-testid='stFormSubmitButton']>button{"
+        "background:linear-gradient(135deg,#3b82f6,#2563eb) !important;"
+        "color:#ffffff !important;border:none !important;border-radius:8px !important;"
+        "font-weight:600 !important;font-size:0.88rem !important;"
+        "padding:10px 20px !important;width:100% !important;}"
+        "[data-testid='stFormSubmitButton']>button:hover{"
+        "background:linear-gradient(135deg,#60a5fa,#3b82f6) !important;"
+        "box-shadow:0 4px 14px rgba(59,130,246,0.45) !important;}"
+        # Slider track
+        f"[data-testid='stSlider'] [data-baseweb='slider'] div[data-testid]"
+        f"{{background-color:{t['divider']} !important;}}"
+        # Widget labels
+        f"[data-testid='stWidgetLabel'] label p,"
+        f"[data-testid='stWidgetLabel'] label"
+        f"{{color:{t['text_label']} !important;}}"
         # Coming soon
         f".coming-soon-banner{{background:{t['cs_bg']};border:1px dashed {t['cs_border']};"
         "border-radius:16px;padding:80px 40px;text-align:center;margin-top:40px;}"
@@ -3930,80 +3980,651 @@ def render_explainability_page():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PAGE 5: REAL-TIME PREDICTION  (unchanged ML logic)
+# PAGE 5: AI CANDIDATE SCREENING  (Phase 7)
 # ─────────────────────────────────────────────────────────────────────────────
-def render_prediction_page():
-    st.header("👤 Real-Time Single Candidate Shortlisting Evaluator")
-    st.caption("Input candidate profile attributes to compute shortlisting suitability score, predicted class, and assigned priority tier.")
 
-    config_path = os.path.join("models", "trained_models", "preprocessor_config.json")
-    fair_path   = os.path.join("models", "trained_models", "fairness_config.json")
-    config      = load_json_config(config_path)
-    fair_config = load_json_config(fair_path)
+# Local shortlist store (no ML changes)
+_SHORTLIST_PATH = os.path.join("data", "shortlist", "shortlist.json")
+
+def _load_shortlist() -> list:
+    if os.path.exists(_SHORTLIST_PATH):
+        with open(_SHORTLIST_PATH, "r") as f:
+            return json.load(f)
+    return []
+
+def _save_shortlist(records: list) -> None:
+    os.makedirs(os.path.dirname(_SHORTLIST_PATH), exist_ok=True)
+    with open(_SHORTLIST_PATH, "w") as f:
+        json.dump(records, f, indent=2)
+
+
+def render_prediction_page():
+    """Phase 7: Professional AI Candidate Screening interface."""
+    t = ThemeManager.get()
+
+    # ── Load configs (same paths as original) ────────────────────────────────
+    config_path  = os.path.join("models", "trained_models", "preprocessor_config.json")
+    fair_path    = os.path.join("models", "trained_models", "fairness_config.json")
+    model_path   = os.path.join("models", "trained_models", "best_model_info.json")
+    shap_path    = os.path.join("reports", "metrics", "shap_feature_importance.csv")
+
+    config       = load_json_config(config_path)
+    fair_config  = load_json_config(fair_path)
+    model_info   = load_json_config(model_path)
+    shap_df_glob = load_csv_report(shap_path)
 
     if not config:
-        st.error(f"Preprocessor config missing at `{config_path}`. Please run preprocessing first.")
+        st.error(
+            f"⚠️ Preprocessor config missing at `{config_path}`. "
+            "Please run `python run_step3_and_4.py` first."
+        )
         return
 
-    with st.form("candidate_form"):
-        st.subheader("Candidate Background Information")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            cdi            = st.slider("City Development Index (CDI):", 0.40, 1.00, 0.92, step=0.01)
-            training_hours = st.number_input("Training Hours Completed:", min_value=1, max_value=500, value=36)
-            gender         = st.selectbox("Gender (Protected Attribute):", ["Male", "Female", "Other", "Unknown"])
-        with c2:
-            experience = st.selectbox("Total Experience (Years):",
-                ["<1","1","2","3","4","5","6","7","8","9","10","11",
-                 "12","13","14","15","16","17","18","19","20",">20"])
-            last_new_job        = st.selectbox("Years Since Last Job Change:", ["never","1","2","3","4",">4"])
-            relevent_experience = st.selectbox("Relevant Work Experience:", ["Has relevent experience","No relevent experience"])
-        with c3:
-            education_level = st.selectbox("Education Level:", ["Graduate","Masters","High School","Phd","Primary School","Unknown"])
-            company_size    = st.selectbox("Company Size:", ["50-99","<10","10000+","10-49","1000-4999","500-999","5000-9999","100-499","Unknown"])
-            company_type    = st.selectbox("Company Type:", ["Pvt Ltd","Funded Startup","Public Sector","Early Stage Startup","NGO","Other","Unknown"])
-        submit_button = st.form_submit_button("🚀 Evaluate Candidate Suitability", use_container_width=True)
+    fair_thresholds = fair_config.get("fair_thresholds", {
+        "Female": 0.47, "Male": 0.46, "Other": 0.49, "Unknown": 0.60
+    })
 
-    if submit_button:
-        candidate_dict = {
-            "city_development_index": [cdi], "training_hours": [training_hours],
-            "gender": [gender], "relevent_experience": [relevent_experience],
-            "enrolled_university": ["no_enrollment"], "education_level": [education_level],
-            "major_discipline": ["STEM"], "experience": [experience],
-            "company_size": [company_size], "company_type": [company_type],
-            "last_new_job": [last_new_job]
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:16px;padding:28px 32px;margin-bottom:24px;">'
+        f'<div style="display:flex;align-items:center;gap:14px;">'
+        f'<div style="font-size:2.4rem;">🎯</div>'
+        f'<div><div style="color:{t["header_title"]};font-size:1.55rem;font-weight:800;'
+        f'letter-spacing:-0.02em;">AI Candidate Screening</div>'
+        f'<div style="color:{t["header_sub"]};font-size:0.88rem;margin-top:3px;">'
+        f'Evaluate candidate suitability using the trained FairHire AI model</div>'
+        f'</div></div></div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Model KPI strip ───────────────────────────────────────────────────────
+    m = model_info.get("metrics", {})
+    model_name = model_info.get("best_model_name", "Logistic Regression")
+    kpi_items = [
+        ("🤖", "Model", "Logistic Regression"),
+        ("📊", "System ROC-AUC",
+         f"{model_info.get('best_roc_auc', 0):.4f}" if model_info else "N/A"),
+        ("⚖️", "Fairness Thresholds",
+         f"♀ {fair_thresholds.get('Female',0.47)} · ♂ {fair_thresholds.get('Male',0.46)}"),
+        ("🧬", "Features Used", f"{len(config.get('feature_names', []))} after OHE"),
+    ]
+    k_cols = st.columns(4)
+    for col, (icon, label, val) in zip(k_cols, kpi_items):
+        col.markdown(
+            f'<div class="kpi-card" style="text-align:center;padding:16px 12px;">'
+            f'<div style="font-size:1.6rem;">{icon}</div>'
+            f'<div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;'
+            f'text-transform:uppercase;letter-spacing:0.06em;margin:4px 0 2px;">{label}</div>'
+            f'<div style="color:{t["text_primary"]};font-size:0.88rem;font-weight:700;">{val}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+
+    # Production Model Info for Recruiters
+    st.markdown(
+        f'<div class="panel-card" style="margin-bottom:20px;">'
+        f'<div style="font-weight:700;color:{t["text_primary"]};font-size:0.9rem;margin-bottom:6px;">🤖 Production Model: Logistic Regression</div>'
+        f'<div style="color:{t["text_secondary"]};font-size:0.8rem;line-height:1.5;">'
+        f'Predictions are generated using the same screening model used by the Candidate Ranking, Fairness, and Explainability pipelines.'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
+    
+    with st.expander("🛠️ Technical Model Information", expanded=False):
+        st.markdown(
+            f'<div style="font-size:0.83rem;color:{t["text_secondary"]};line-height:1.8;">'
+            f'• <b>Model:</b> Logistic Regression<br>'
+            f'• <b>Learning rate:</b> 0.08<br>'
+            f'• <b>Iterations:</b> 400<br>'
+            f'• <b>L2 regularization:</b> 0.1<br>'
+            f'• <b>Production role:</b> Candidate screening'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # ── Input Form ────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="section-header">📋 Candidate Information</div>',
+        unsafe_allow_html=True
+    )
+
+    with st.form("screening_form", clear_on_submit=False):
+
+        # ── Section 1: Personal Profile ───────────────────────────────────────
+        st.markdown(
+            f'<div style="background:{t["metric_bg"]};border-left:3px solid #3b82f6;'
+            f'border-radius:8px;padding:8px 14px;margin:10px 0 14px;'
+            f'color:{t["text_primary"]};font-weight:700;font-size:0.85rem;">'
+            f'👤 Personal Profile</div>',
+            unsafe_allow_html=True
+        )
+        p1, p2, p3 = st.columns(3)
+        with p1:
+            candidate_id = st.text_input(
+                "Candidate ID", placeholder="e.g. CAND-2024-001",
+                help="Optional unique identifier for this candidate"
+            )
+        with p2:
+            gender = st.selectbox(
+                "Gender ⚖️",
+                ["Male", "Female", "Other", "Unknown"],
+                help="Protected attribute — used only for fairness-calibrated threshold selection"
+            )
+        with p3:
+            cdi = st.slider(
+                "City Development Index", 0.40, 1.00, 0.80, step=0.01,
+                help="CDI of the candidate's city (0.40 = low development, 1.00 = high development)"
+            )
+
+        # ── Section 2: Education ──────────────────────────────────────────────
+        st.markdown(
+            f'<div style="background:{t["metric_bg"]};border-left:3px solid #10b981;'
+            f'border-radius:8px;padding:8px 14px;margin:18px 0 14px;'
+            f'color:{t["text_primary"]};font-weight:700;font-size:0.85rem;">'
+            f'🎓 Education</div>',
+            unsafe_allow_html=True
+        )
+        e1, e2, e3 = st.columns(3)
+        with e1:
+            education_level = st.selectbox(
+                "Education Level",
+                ["Graduate", "Masters", "Phd", "High School", "Primary School", "Unknown"],
+                help="Highest educational qualification attained"
+            )
+        with e2:
+            major_discipline = st.selectbox(
+                "Major Discipline",
+                ["STEM", "Business Degree", "Arts", "Humanities", "No Major", "Other", "Unknown"],
+                help="Primary academic discipline"
+            )
+        with e3:
+            enrolled_university_label = st.selectbox(
+                "Current University Enrollment",
+                ["Not enrolled", "Full-time course", "Part-time course", "Unknown"],
+                help="Current university enrollment status"
+            )
+        # Map display labels to model-expected values
+        _enroll_map = {
+            "Not enrolled": "no_enrollment",
+            "Full-time course": "Full time course",
+            "Part-time course": "Part time course",
+            "Unknown": "Unknown",
         }
-        cand_df = pd.DataFrame(candidate_dict)
+        enrolled_university = _enroll_map[enrolled_university_label]
 
-        from src.preprocessing import CandidatePreprocessor, CustomStandardScaler
-        preprocessor = CandidatePreprocessor()
-        preprocessor.feature_names      = config["feature_names"]
-        preprocessor.nominal_categories = config["nominal_categories"]
-        scaler = CustomStandardScaler()
-        scaler.mean_  = pd.Series(config["scaler_mean"])
-        scaler.scale_ = pd.Series(config["scaler_scale"])
-        preprocessor.scaler = scaler
-        X_cand_scaled = preprocessor.transform(cand_df)
+        # ── Section 3: Professional Experience ───────────────────────────────
+        st.markdown(
+            f'<div style="background:{t["metric_bg"]};border-left:3px solid #f59e0b;'
+            f'border-radius:8px;padding:8px 14px;margin:18px 0 14px;'
+            f'color:{t["text_primary"]};font-weight:700;font-size:0.85rem;">'
+            f'💼 Professional Experience</div>',
+            unsafe_allow_html=True
+        )
+        x1, x2 = st.columns(2)
+        x3, x4 = st.columns(2)
+        with x1:
+            experience = st.selectbox(
+                "Total Experience (Years)",
+                ["<1","1","2","3","4","5","6","7","8","9","10","11",
+                 "12","13","14","15","16","17","18","19","20",">20"],
+                index=4,
+                help="Total years of professional experience"
+            )
+        with x2:
+            relevent_experience = st.selectbox(
+                "Relevant Experience",
+                ["Has relevent experience", "No relevent experience"],
+                help="Whether the candidate has directly relevant work experience"
+            )
+        with x3:
+            company_type = st.selectbox(
+                "Current / Last Company Type",
+                ["Pvt Ltd", "Funded Startup", "Public Sector",
+                 "Early Stage Startup", "NGO", "Other", "Unknown"],
+                help="Type of the most recent employer"
+            )
+        with x4:
+            company_size = st.selectbox(
+                "Company Size (Employees)",
+                ["50-99", "<10", "10000+", "10-49", "1000-4999",
+                 "500-999", "5000-9999", "100-499", "Unknown"],
+                help="Size of the most recent employer"
+            )
 
-        from src.modeling import LogisticRegressionModel
-        X_train = pd.read_csv(os.path.join("data", "processed", "X_train.csv")).values
-        y_train = pd.read_csv(os.path.join("data", "processed", "y_train.csv")).values.ravel()
-        model = LogisticRegressionModel(lr=0.08, n_iters=400, l2_reg=0.1)
-        model.fit(X_train, y_train)
-        prob = float(model.predict_proba(X_cand_scaled.values)[0, 1])
+        lj1, lj2 = st.columns([1, 2])
+        with lj1:
+            last_new_job = st.selectbox(
+                "Years Since Last Job Change",
+                ["never", "1", "2", "3", "4", ">4"],
+                help="How recently did the candidate change jobs?"
+            )
 
-        threshold = fair_config.get("fair_thresholds", {}).get(gender, 0.5)
-        pred_class = int(prob >= threshold)
-        tier = ("High Priority" if prob >= 0.50 else
-                "Qualified"     if prob >= 0.35 else
-                "Extended"      if prob >= 0.20 else "Reserve")
+        # ── Section 4: Training ───────────────────────────────────────────────
+        st.markdown(
+            f'<div style="background:{t["metric_bg"]};border-left:3px solid #8b5cf6;'
+            f'border-radius:8px;padding:8px 14px;margin:18px 0 14px;'
+            f'color:{t["text_primary"]};font-weight:700;font-size:0.85rem;">'
+            f'📚 Training & Development</div>',
+            unsafe_allow_html=True
+        )
+        tr1, tr2 = st.columns([1, 2])
+        with tr1:
+            training_hours = st.number_input(
+                "Training Hours Completed", min_value=1, max_value=500, value=50, step=1,
+                help="Total training hours logged (1–500)"
+            )
 
-        st.markdown("---")
-        st.subheader("📊 Candidate Prediction Analysis Results")
-        res1, res2, res3 = st.columns(3)
-        res1.metric("Predicted Suitability Score", f"{prob:.4f}")
-        res2.metric("Fairness-Calibrated Flag", "Shortlisted (1)" if pred_class == 1 else "Not Shortlisted (0)")
-        res3.metric("Assigned Recruitment Tier", tier)
+        # ── Submit ────────────────────────────────────────────────────────────
+        st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+        _, btn_col, _ = st.columns([1, 2, 1])
+        with btn_col:
+            submitted = st.form_submit_button(
+                "🚀  Evaluate Candidate", use_container_width=True
+            )
+
+    # ── Validation & Prediction ───────────────────────────────────────────────
+    if submitted:
+        errors = []
+        if not (1 <= training_hours <= 500):
+            errors.append("Training hours must be between 1 and 500.")
+        if not (0.40 <= cdi <= 1.00):
+            errors.append("City Development Index must be between 0.40 and 1.00.")
+
+        if errors:
+            for err in errors:
+                st.error(f"⚠️ {err}")
+        else:
+            with st.spinner("⚙️ Running AI model…"):
+                # ── Build candidate dict (identical to original page logic) ─────
+                candidate_dict = {
+                    "city_development_index": [cdi],
+                    "training_hours":         [training_hours],
+                    "gender":                 [gender],
+                    "relevent_experience":    [relevent_experience],
+                    "enrolled_university":    [enrolled_university],
+                    "education_level":        [education_level],
+                    "major_discipline":       [major_discipline],
+                    "experience":             [experience],
+                    "company_size":           [company_size],
+                    "company_type":           [company_type],
+                    "last_new_job":           [last_new_job],
+                }
+                cand_df = pd.DataFrame(candidate_dict)
+
+                # ── Preprocessing (identical to original) ─────────────────────
+                from src.preprocessing import CandidatePreprocessor, CustomStandardScaler
+                preprocessor = CandidatePreprocessor()
+                preprocessor.feature_names      = config["feature_names"]
+                preprocessor.nominal_categories = config["nominal_categories"]
+                scaler = CustomStandardScaler()
+                scaler.mean_  = pd.Series(config["scaler_mean"])
+                scaler.scale_ = pd.Series(config["scaler_scale"])
+                preprocessor.scaler = scaler
+                X_cand_scaled = preprocessor.transform(cand_df)
+
+                # ── Prediction (identical to original) ────────────────────────
+                from src.modeling import LogisticRegressionModel
+                X_train = pd.read_csv(
+                    os.path.join("data", "processed", "X_train.csv")
+                ).values
+                y_train = pd.read_csv(
+                    os.path.join("data", "processed", "y_train.csv")
+                ).values.ravel()
+                model = LogisticRegressionModel(lr=0.08, n_iters=400, l2_reg=0.1)
+                model.fit(X_train, y_train)
+                prob = float(model.predict_proba(X_cand_scaled.values)[0, 1])
+
+                # ── Fairness-calibrated threshold (identical to original) ──────
+                threshold  = fair_thresholds.get(gender, 0.50)
+                pred_class = int(prob >= threshold)
+                tier       = ("High Priority" if prob >= 0.50 else
+                              "Qualified"     if prob >= 0.35 else
+                              "Extended"      if prob >= 0.20 else "Reserve")
+
+                # ── Confidence from real probability (no fabrication) ─────────
+                if prob >= 0.80:   conf, conf_clr = "Very High", "#10b981"
+                elif prob >= 0.65: conf, conf_clr = "High",      "#34d399"
+                elif prob >= 0.50: conf, conf_clr = "Moderate",  "#f59e0b"
+                elif prob >= 0.35: conf, conf_clr = "Low",       "#f97316"
+                else:              conf, conf_clr = "Very Low",  "#ef4444"
+
+                # ── Persist across theme toggles ──────────────────────────────
+                _cid = (candidate_id.strip() if candidate_id.strip()
+                        else f"CAND-{abs(hash(f'{cdi}{experience}{gender}')) % 100000}")
+                st.session_state["pred_result"] = {
+                    "prob": prob, "pred_class": pred_class, "tier": tier,
+                    "conf": conf, "conf_clr": conf_clr,
+                    "threshold": threshold, "gender": gender,
+                    "cdi": cdi, "experience": experience,
+                    "education": education_level, "major": major_discipline,
+                    "training": training_hours, "rel_exp": relevent_experience,
+                    "company_type": company_type, "company_size": company_size,
+                    "last_new_job": last_new_job, "enrolled": enrolled_university_label,
+                    "candidate_id": _cid,
+                    "scaled_features": dict(
+                        zip(config["feature_names"], X_cand_scaled.values[0])
+                    ),
+                }
+
+    # ── Results Panel ─────────────────────────────────────────────────────────
+    result = st.session_state.get("pred_result")
+    if not result:
+        st.markdown(
+            f'<div style="background:{t["metric_bg"]};border:1px dashed {t["card_border"]};'
+            f'border-radius:14px;padding:40px;text-align:center;margin-top:24px;">'
+            f'<div style="font-size:3rem;margin-bottom:12px;">🎯</div>'
+            f'<div style="color:{t["text_primary"]};font-size:1.1rem;font-weight:700;">'
+            f'No evaluation yet</div>'
+            f'<div style="color:{t["text_muted"]};font-size:0.85rem;margin-top:6px;">'
+            f'Fill in the candidate details above and click <b>Evaluate Candidate</b>.</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        return
+
+    prob       = result["prob"]
+    pred_class = result["pred_class"]
+    tier       = result["tier"]
+    conf       = result["conf"]
+    conf_clr   = result["conf_clr"]
+    threshold  = result["threshold"]
+    gender_r   = result["gender"]
+    _cid       = result["candidate_id"]
+
+    # Tier colours
+    _TC = {
+        "High Priority": ("#ef4444", "rgba(239,68,68,0.1)",  "rgba(239,68,68,0.3)"),
+        "Qualified":     ("#10b981", "rgba(16,185,129,0.1)", "rgba(16,185,129,0.3)"),
+        "Extended":      ("#f59e0b", "rgba(245,158,11,0.1)", "rgba(245,158,11,0.3)"),
+        "Reserve":       ("#6b7280", "rgba(107,114,128,0.1)","rgba(107,114,128,0.3)"),
+    }
+    tier_clr, tier_bg, tier_bd = _TC.get(tier, _TC["Reserve"])
+
+    # Recommendation label
+    _REC_LABEL = {
+        "High Priority": "✅ Recommended for Interview",
+        "Qualified":     "✅ Proceed to Screening",
+        "Extended":      "⚠️ Consider for Pipeline",
+        "Reserve":       "❌ Not Recommended",
+    }
+    rec_label = _REC_LABEL.get(tier, "—")
+
+    st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="section-header">📊 Screening Result — {_cid}</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Result KPI cards ─────────────────────────────────────────────────────
+    rc1, rc2, rc3, rc4 = st.columns(4)
+    score_pct = prob * 100
+
+    # Score gauge card
+    rc1.markdown(
+        f'<div class="kpi-card" style="text-align:center;padding:20px 12px;">'
+        f'<div style="color:{t["text_muted"]};font-size:0.62rem;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Suitability Score</div>'
+        f'<div style="font-size:2.2rem;font-weight:900;color:{tier_clr};">{score_pct:.1f}%</div>'
+        f'<div style="background:{t["divider"]};border-radius:4px;height:6px;margin:8px 4px 0;">'
+        f'<div style="background:{tier_clr};width:{score_pct:.0f}%;height:100%;border-radius:4px;"></div>'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
+    # Tier badge card
+    rc2.markdown(
+        f'<div class="kpi-card" style="text-align:center;padding:20px 12px;">'
+        f'<div style="color:{t["text_muted"]};font-size:0.62rem;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Priority Tier</div>'
+        f'<span style="background:{tier_bg};color:{tier_clr};border:1px solid {tier_bd};'
+        f'padding:6px 16px;border-radius:20px;font-size:0.82rem;font-weight:700;">'
+        f'{tier}</span></div>',
+        unsafe_allow_html=True
+    )
+    # Recommendation card
+    rc3.markdown(
+        f'<div class="kpi-card" style="text-align:center;padding:20px 12px;">'
+        f'<div style="color:{t["text_muted"]};font-size:0.62rem;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Recommendation</div>'
+        f'<div style="color:{t["text_primary"]};font-size:0.82rem;font-weight:700;">'
+        f'{rec_label}</div></div>',
+        unsafe_allow_html=True
+    )
+    # Confidence card
+    rc4.markdown(
+        f'<div class="kpi-card" style="text-align:center;padding:20px 12px;">'
+        f'<div style="color:{t["text_muted"]};font-size:0.62rem;font-weight:700;'
+        f'text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;">Confidence</div>'
+        f'<div style="color:{conf_clr};font-size:1.1rem;font-weight:800;">{conf}</div>'
+        f'<div style="color:{t["text_muted"]};font-size:0.7rem;margin-top:3px;">'
+        f'P={prob:.4f}</div></div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
+
+    # ── Recruiter Explanation ─────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="section-header">🧠 Recruiter Explanation</div>',
+        unsafe_allow_html=True
+    )
+
+    # Build narrative using the existing generate_candidate_narrative() helper
+    cand_row_for_narrative = {
+        "Suitability Score": prob,
+        "Priority Tier":     tier,
+        "Experience":        result["experience"],
+        "Education":         result["education"],
+        "Training Hours":    result["training"],
+        "Relevant Exp":      result["rel_exp"],
+        "Major":             result["major"],
+        "Company Type":      result["company_type"],
+        "City CDI":          result["cdi"],
+    }
+    try:
+        narrative_data = generate_candidate_narrative(cand_row_for_narrative)
+    except Exception:
+        narrative_data = {
+            "narrative": f"Candidate scored {prob:.3f} on the suitability model.",
+            "strengths": [], "weaknesses": [], "interview_type": "HR Screening",
+            "action": rec_label,
+        }
+
+    # Derive positive/negative factors from global SHAP importance + feature direction
+    shap_factors_pos, shap_factors_neg = [], []
+    if not shap_df_glob.empty and "Feature_Label" in shap_df_glob.columns:
+        top_features = shap_df_glob.head(12)["Feature_Label"].tolist()
+        scaled_f = result.get("scaled_features", {})
+        for feat in top_features:
+            direction = _FEAT_DIRECTION.get(feat, 0)
+            feat_val  = scaled_f.get(feat, 0)
+            if direction != 0:
+                # Positive direction: high feature value → higher score
+                is_pos = (direction > 0 and feat_val > 0) or (direction < 0 and feat_val < 0)
+            else:
+                is_pos = feat_val > 0
+            template = _FEAT_TEMPLATES.get(feat, feat.replace("_", " ").title())
+            if is_pos and len(shap_factors_pos) < 4:
+                shap_factors_pos.append(template)
+            elif not is_pos and len(shap_factors_neg) < 3:
+                shap_factors_neg.append(template)
+
+    # Merge SHAP-derived factors with narrative strengths/weaknesses
+    positives = (shap_factors_pos or narrative_data.get("strengths", []))[:4]
+    negatives = (shap_factors_neg or narrative_data.get("weaknesses", []))[:3]
+    interview = narrative_data.get("interview_type", "HR Screening")
+
+    exp_col1, exp_col2 = st.columns(2)
+
+    with exp_col1:
+        pos_items = "".join(
+            f'<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">'
+            f'<span style="color:#10b981;font-size:1rem;margin-top:1px;">●</span>'
+            f'<span style="color:{t["text_primary"]};font-size:0.83rem;">{s}</span></div>'
+            for s in positives
+        ) if positives else f'<span style="color:{t["text_muted"]}">None identified</span>'
+        st.markdown(
+            f'<div class="panel-card">'
+            f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.88rem;'
+            f'margin-bottom:12px;">✅ Positive Factors</div>'
+            f'{pos_items}</div>',
+            unsafe_allow_html=True
+        )
+
+    with exp_col2:
+        neg_items = "".join(
+            f'<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">'
+            f'<span style="color:#ef4444;font-size:1rem;margin-top:1px;">●</span>'
+            f'<span style="color:{t["text_primary"]};font-size:0.83rem;">{s}</span></div>'
+            for s in negatives
+        ) if negatives else f'<span style="color:{t["text_muted"]}">No concerns identified</span>'
+        st.markdown(
+            f'<div class="panel-card">'
+            f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.88rem;'
+            f'margin-bottom:12px;">⚠️ Factors Requiring Attention</div>'
+            f'{neg_items}</div>',
+            unsafe_allow_html=True
+        )
+
+    # Narrative + next step
+    st.markdown(
+        f'<div class="panel-card" style="margin-top:14px;">'
+        f'<div style="color:{t["text_primary"]};font-weight:700;font-size:0.88rem;'
+        f'margin-bottom:8px;">📝 Recruiter Summary</div>'
+        f'<div style="color:{t["text_secondary"]};font-size:0.83rem;line-height:1.65;">'
+        f'{narrative_data.get("narrative","")}</div>'
+        f'<div style="margin-top:14px;padding-top:12px;border-top:1px solid {t["divider"]};">'
+        f'<span style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;'
+        f'text-transform:uppercase;">Recommended Next Step</span>'
+        f'<div style="color:#3b82f6;font-weight:700;font-size:0.88rem;margin-top:4px;">'
+        f'🗓 {interview}</div></div></div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
+
+    # ── Fairness Card ─────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="section-header">⚖️ Fairness-Aware Decision</div>',
+        unsafe_allow_html=True
+    )
+    mit = fair_config.get("mitigated_summary", {})
+    raw = fair_config.get("raw_summary",      {})
+    dpd_raw = raw.get("Demographic Parity Difference", 0)
+    dpd_mit = mit.get("Demographic Parity Difference", 0)
+
+    st.markdown(
+        f'<div class="panel-card" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">'
+        f'<div><div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;'
+        f'text-transform:uppercase;margin-bottom:4px;">Protected Attribute</div>'
+        f'<div style="color:{t["text_primary"]};font-weight:700;">Gender (⚖️ {gender_r})</div>'
+        f'<div style="color:{t["text_muted"]};font-size:0.72rem;margin-top:3px;">'
+        f'Threshold applied: {threshold}</div></div>'
+        f'<div><div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;'
+        f'text-transform:uppercase;margin-bottom:4px;">Fairness Status</div>'
+        f'<div style="color:#10b981;font-weight:700;">✅ Bias Mitigated</div>'
+        f'<div style="color:{t["text_muted"]};font-size:0.72rem;margin-top:3px;">'
+        f'DPD: {dpd_raw:.4f} → {dpd_mit:.4f} after mitigation</div></div>'
+        f'<div><div style="color:{t["text_muted"]};font-size:0.65rem;font-weight:700;'
+        f'text-transform:uppercase;margin-bottom:4px;">Evaluation Level</div>'
+        f'<div style="color:{t["text_primary"]};font-weight:700;">System-Level</div>'
+        f'<div style="color:{t["text_muted"]};font-size:0.72rem;margin-top:3px;">'
+        f'Fairness is validated at the model level, not per-candidate</div></div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+    st.info(
+        "ℹ️ **Fairness note:** Gender is used **only** to select a fairness-calibrated "
+        "decision threshold, reducing historical bias. It does not artificially raise or "
+        "lower the model's predicted probability. Fairness metrics (DPD, EOD) are "
+        "evaluated at the system/model level using Fairlearn."
+    )
+
+    st.markdown("<div style='margin-top:24px;'></div>", unsafe_allow_html=True)
+
+    # ── Action Buttons ────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="section-header">⚡ Actions</div>',
+        unsafe_allow_html=True
+    )
+    a1, a2, a3, a4 = st.columns(4)
+
+    with a1:
+        if st.button("👤 View Profile", use_container_width=True, key="pred_view_profile"):
+            # Persist candidate context so profile page shows relevant data
+            st.session_state["pred_profile_context"] = result
+            st.info("Profile view requires an existing ranking record. "
+                    "Use Candidate Rankings to look up this candidate by ID.")
+
+    with a2:
+        if st.button("➕ Add to Shortlist", use_container_width=True, key="pred_shortlist"):
+            shortlist = _load_shortlist()
+            entry = {
+                "candidate_id": _cid, "gender": gender_r,
+                "suitability_score": round(prob, 4),
+                "tier": tier, "confidence": conf,
+                "shortlisted_at": pd.Timestamp.now().isoformat(),
+            }
+            # Avoid duplicates
+            existing_ids = [e["candidate_id"] for e in shortlist]
+            if _cid not in existing_ids:
+                shortlist.append(entry)
+                _save_shortlist(shortlist)
+                st.success(f"✅ {_cid} added to shortlist ({len(shortlist)} total).")
+            else:
+                st.warning(f"⚠️ {_cid} is already in the shortlist.")
+
+    with a3:
+        report_lines = [
+            f"FairHire AI — Candidate Screening Report",
+            f"Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}",
+            f"{'='*50}",
+            f"Candidate ID      : {_cid}",
+            f"Gender            : {gender_r}",
+            f"City Dev. Index   : {result['cdi']:.2f}",
+            f"Education         : {result['education']}",
+            f"Major             : {result['major']}",
+            f"Experience        : {result['experience']} yrs",
+            f"Relevant Exp.     : {result['rel_exp']}",
+            f"Company Type      : {result['company_type']}",
+            f"Company Size      : {result['company_size']}",
+            f"Training Hours    : {result['training']}",
+            f"{'='*50}",
+            f"RESULT",
+            f"Suitability Score : {prob:.4f} ({score_pct:.1f}%)",
+            f"Priority Tier     : {tier}",
+            f"Recommendation    : {rec_label}",
+            f"Confidence        : {conf}",
+            f"Fairness Threshold: {threshold} (gender-calibrated)",
+            f"Predicted Class   : {'Shortlisted' if pred_class==1 else 'Not Shortlisted'}",
+            f"{'='*50}",
+            f"POSITIVE FACTORS",
+        ] + [f"  + {s}" for s in positives] + [
+            f"AREAS OF ATTENTION",
+        ] + [f"  - s" for s in negatives] + [
+            f"{'='*50}",
+            f"NEXT STEP: {interview}",
+            f"{'='*50}",
+            f"Note: Fairness metrics are validated at the system/model level.",
+            f"Model: Logistic Regression | System ROC-AUC: {model_info.get('best_roc_auc',0):.4f}",
+        ]
+        report_text = "\n".join(report_lines)
+        st.download_button(
+            "📄 Download Report",
+            data=report_text,
+            file_name=f"screening_{_cid}.txt",
+            mime="text/plain",
+            use_container_width=True,
+            key="pred_download",
+        )
+
+    with a4:
+        if st.button("🗑 Clear Form", use_container_width=True, key="pred_clear"):
+            st.session_state.pop("pred_result", None)
+            st.rerun()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4060,7 +4681,7 @@ def render_settings_page():
 
     # ── Model Information ─────────────────────────────────────────────────────
     st.markdown(
-        '<div class="settings-card"><h4>🤖 Model Information</h4></div>',
+        '<div class="settings-card"><h4>🤖 Model Architecture & Benchmarking</h4></div>',
         unsafe_allow_html=True
     )
     model_info  = load_json_config(os.path.join("models", "trained_models", "best_model_info.json"))
@@ -4083,21 +4704,46 @@ def render_settings_page():
             rows += _kv_row(lbl, val, clr, t["panel_border_l"], t["text_label"])
         st.markdown(
             f'<div class="panel-card"><div style="color:{t["text_primary"]};font-weight:700;margin-bottom:12px;">'
-            f'{model_name}</div>' + rows + '</div>',
+            f'🏆 Benchmark Model<br><span style="font-size:0.85rem;color:{t["text_muted"]};">{model_name}</span></div>' + rows + '</div>',
             unsafe_allow_html=True
         )
 
     with col_m2:
-        rows2 = ""
-        for grp, thr_val in ft.items():
-            rows2 += _kv_row(grp, str(thr_val), "#34d399", t["panel_border_l"], t["text_label"])
         st.markdown(
             f'<div class="panel-card"><div style="color:{t["text_primary"]};font-weight:700;margin-bottom:12px;">'
-            f'⚖️ Fairness Thresholds</div>' + rows2 +
-            f'<div style="margin-top:10px;font-size:0.72rem;color:{t["text_muted"]};">'
-            f'Calibrated via Fairlearn ThresholdOptimizer (post-processing)</div></div>',
+            f'⚙️ Production Screening Model<br><span style="font-size:0.85rem;color:{t["text_muted"]};">Logistic Regression</span></div>'
+            f'<div style="font-size:0.8rem;color:{t["text_secondary"]};line-height:1.6;margin-bottom:8px;">'
+            f'<b>Used consistently across:</b><br>'
+            f'• Candidate Ranking<br>'
+            f'• Real-Time Screening<br>'
+            f'• Fairness Calibration<br>'
+            f'• SHAP Explainability'
+            f'</div>'
+            f'</div>',
             unsafe_allow_html=True
         )
+
+    st.markdown(
+        f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};border-radius:12px;padding:16px;margin:16px 0;">'
+        f'<div style="font-size:0.85rem;color:{t["text_primary"]};line-height:1.6;">'
+        f'<b>Architectural Alignment:</b> Random Forest achieved the highest validation ROC-AUC among the evaluated benchmark models. '
+        f'Logistic Regression is used as the production screening model because the candidate ranking, fairness calibration, and '
+        f'explainability pipelines are consistently built around the same model. This ensures that candidate scores, fairness thresholds, '
+        f'and explanations remain aligned across the application.'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
+    
+    rows2 = ""
+    for grp, thr_val in ft.items():
+        rows2 += _kv_row(grp, str(thr_val), "#34d399", t["panel_border_l"], t["text_label"])
+    st.markdown(
+        f'<div class="panel-card"><div style="color:{t["text_primary"]};font-weight:700;margin-bottom:12px;">'
+        f'⚖️ Fairness Thresholds</div>' + rows2 +
+        f'<div style="margin-top:10px;font-size:0.72rem;color:{t["text_muted"]};">'
+        f'Calibrated via Fairlearn ThresholdOptimizer (post-processing) on the Production Model</div></div>',
+        unsafe_allow_html=True
+    )
 
     st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
 

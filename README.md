@@ -88,6 +88,12 @@ Evaluated on Stratified Validation Set ($N = 3,831$):
 | **Logistic Regression** | **0.7669** | **0.5735** | **0.2534** | **0.3515** | **0.7682** | Top Linear |
 | **KNN Classifier** | 0.7502 | 0.4983 | 0.3152 | 0.3861 | 0.7164 | Baseline |
 
+### Model Architecture
+
+The project evaluates multiple machine learning models during benchmarking. Random Forest achieved the highest validation ROC-AUC of 0.7854.
+
+For the deployed candidate screening workflow, Logistic Regression is used consistently across candidate ranking, real-time prediction, fairness calibration, and explainability. This ensures that predictions, fairness thresholds, and SHAP explanations remain consistent across the application.
+
 ### 3. Algorithmic Fairness Audit (Fairlearn Framework)
 Post-processing decision threshold optimization across **Gender** groups ($N = 3,831$ Validation Candidates):
 
