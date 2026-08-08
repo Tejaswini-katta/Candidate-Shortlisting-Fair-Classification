@@ -31,3 +31,6 @@ Thumbs.db
 
 # ── Streamlit cache ──────────────────────────────────────────────────────────
 .streamlit/secrets.toml
+
+# ── Application runtime data ─────────────────────────────────────────────────
+data/shortlist/
