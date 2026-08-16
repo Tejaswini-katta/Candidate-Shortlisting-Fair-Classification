@@ -1058,11 +1058,31 @@ def _build_ranking_df() -> pd.DataFrame:
     # Store full rec dict as JSON string for spotlight panel lookup
     merged["_rec_json"]      = recs.apply(lambda r: json.dumps(r))
 
-    # ── Inject Phase 8 Resume Candidate (In-Memory Only) ─────────────────────
+    # ── Inject Resume Candidates (Session + Persistent History) ─────────────
+    history_records = _load_screening_history()
+    all_resume_recs = []
+    seen_ids = set()
+
     if "resume_candidate" in st.session_state and st.session_state["resume_candidate"]:
         rc = st.session_state["resume_candidate"]
+        cand_id = rc.get("Candidate ID") or rc.get("enrollee_id")
+        if cand_id:
+            all_resume_recs.append(rc)
+            seen_ids.add(str(cand_id))
+
+    for item in history_records:
+        r_data = item.get("raw_data", {})
+        cand_id = item.get("candidate_id") or item.get("id") or r_data.get("Candidate ID")
+        if cand_id and str(cand_id) not in seen_ids:
+            r_data["Candidate ID"] = cand_id
+            r_data["prediction_probability"] = item.get("prob") or item.get("suitability_score", 0.0)
+            r_data["candidate_name"] = item.get("candidate_name") or "Name Not Detected"
+            all_resume_recs.append(r_data)
+            seen_ids.add(str(cand_id))
+
+    inject_rows = []
+    for rc in all_resume_recs:
         prob = rc.get("prediction_probability", 0)
-        
         if prob >= 0.8:
             tier = "High Priority"
         elif prob >= 0.6:
@@ -1075,7 +1095,7 @@ def _build_ranking_df() -> pd.DataFrame:
         rc_row = {
             "Candidate ID": rc.get("Candidate ID"),
             "Suitability Score": prob,
-            "Shortlisted": 1 if prob >= 0.50 else 0, # Rough default logic since fairness thresholds might differ per group
+            "Shortlisted": 1 if prob >= 0.50 else 0,
             "Percentile": 0.0,
             "Priority Tier": tier,
             "Gender": str(rc.get("gender", "Unknown")),
@@ -1094,9 +1114,10 @@ def _build_ranking_df() -> pd.DataFrame:
         rc_row["Recommendation"] = rec["action"]
         rc_row["Confidence"] = rec["confidence"]
         rc_row["_rec_json"] = json.dumps(rec)
+        inject_rows.append(rc_row)
         
-        # Append dynamically to the top
-        rc_df = pd.DataFrame([rc_row])
+    if inject_rows:
+        rc_df = pd.DataFrame(inject_rows)
         merged = pd.concat([rc_df, merged], ignore_index=True)
 
     return merged
@@ -5103,6 +5124,209 @@ def _generate_validation_warnings(text: str, fields: dict, confidences: dict, ca
 
     return warnings
 
+def _load_screening_history() -> list:
+    """
+    Phase 10: Load persistent resume screening history from data/resume_screening_history.json.
+    """
+    history_file = os.path.join("data", "resume_screening_history.json")
+    if not os.path.exists(history_file):
+        return []
+    try:
+        with open(history_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+            return []
+    except Exception:
+        return []
+
+def _save_screening_result(screening_record: dict) -> None:
+    """
+    Phase 10: Append or update a candidate screening record in data/resume_screening_history.json.
+    Deduplicates by candidate_id to prevent duplicates on page reruns.
+    """
+    os.makedirs("data", exist_ok=True)
+    history_file = os.path.join("data", "resume_screening_history.json")
+    history = _load_screening_history()
+    
+    cand_id = screening_record.get("candidate_id") or screening_record.get("id")
+    if not cand_id:
+        return
+
+    updated = False
+    for i, item in enumerate(history):
+        item_id = item.get("candidate_id") or item.get("id")
+        if item_id == cand_id:
+            if "status" in item and "status" not in screening_record:
+                screening_record["status"] = item["status"]
+            if "recruiter_notes" in item and "recruiter_notes" not in screening_record:
+                screening_record["recruiter_notes"] = item["recruiter_notes"]
+            history[i] = screening_record
+            updated = True
+            break
+            
+    if not updated:
+        if "status" not in screening_record:
+            screening_record["status"] = "Pending"
+        if "recruiter_notes" not in screening_record:
+            screening_record["recruiter_notes"] = ""
+        history.append(screening_record)
+        
+    try:
+        with open(history_file, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
+    except Exception:
+        pass
+
+def _update_screening_status(candidate_id: str, new_status: str, recruiter_notes: str = None) -> bool:
+    """
+    Phase 10: Update candidate status (Pending, Shortlisted, Rejected) and notes.
+    """
+    history_file = os.path.join("data", "resume_screening_history.json")
+    history = _load_screening_history()
+    updated = False
+    
+    for item in history:
+        item_id = item.get("candidate_id") or item.get("id")
+        if item_id == candidate_id:
+            item["status"] = new_status
+            if recruiter_notes is not None:
+                item["recruiter_notes"] = recruiter_notes
+            item["status_updated_timestamp"] = datetime.now().isoformat()
+            updated = True
+            break
+            
+    if updated:
+        try:
+            with open(history_file, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2)
+            return True
+        except Exception:
+            return False
+    return False
+
+def _run_single_resume_screening(file_obj, filename: str, input_overrides: dict = None) -> dict:
+    """
+    Phase 10: Unified single resume screening pipeline runner.
+    Executes text extraction, name parsing, field extraction, quality calculation,
+    and production ML model prediction. Auto-saves completed result to history.
+    """
+    text = _extract_resume_text(file_obj, filename) if file_obj else ""
+    if not text and input_overrides is None:
+        return {"error": f"Unable to extract text from '{filename}'."}
+
+    fields = _extract_candidate_fields(text) if text else {}
+    name = _extract_candidate_name(text) if text else "Name Not Detected"
+
+    if input_overrides:
+        for k, v in input_overrides.items():
+            if k in fields or k in ["training_hours", "city_development_index"]:
+                fields[k] = v
+
+    conf = _calculate_field_confidences(text, fields, name)
+    qual = _calculate_resume_quality_score(text, fields, conf, name)
+    warns = _generate_validation_warnings(text, fields, conf, name, qual)
+
+    mapped_gender = "Unknown" if fields.get("gender") == "Not Provided" else fields.get("gender", "Unknown")
+
+    input_data = {
+        "city_development_index": float(fields.get("city_development_index") or 0.850),
+        "training_hours": int(fields.get("training_hours") or 50),
+        "gender": mapped_gender,
+        "relevent_experience": fields.get("relevent_experience") or "No relevent experience",
+        "enrolled_university": fields.get("enrolled_university") or "no_enrollment",
+        "education_level": fields.get("education_level") or "Graduate",
+        "major_discipline": fields.get("major_discipline") or "STEM",
+        "experience": fields.get("experience") or "1-20",
+        "company_size": fields.get("company_size") or "Unknown",
+        "company_type": fields.get("company_type") or "Pvt Ltd",
+        "last_new_job": fields.get("last_new_job") or "1"
+    }
+
+    config_path = os.path.join("models", "trained_models", "preprocessor_config.json")
+    if not os.path.exists(config_path):
+        return {"error": "Missing ML models configuration."}
+
+    config = json.load(open(config_path))
+    import sys
+    if "src" not in sys.path:
+        sys.path.insert(0, ".")
+    from src.preprocessing import CandidatePreprocessor, CustomStandardScaler
+    from src.modeling import LogisticRegressionModel
+
+    df_in = pd.DataFrame([input_data])
+    prep = CandidatePreprocessor()
+    prep.feature_names = config["feature_names"]
+    prep.nominal_categories = config["nominal_categories"]
+    scaler = CustomStandardScaler()
+    scaler.mean_ = pd.Series(config["scaler_mean"])
+    scaler.scale_ = pd.Series(config["scaler_scale"])
+    prep.scaler = scaler
+
+    X_proc = prep.transform(df_in)
+    X_train = pd.read_csv(os.path.join("data", "processed", "X_train.csv")).values
+    y_train = pd.read_csv(os.path.join("data", "processed", "y_train.csv")).values.ravel()
+
+    model = LogisticRegressionModel(lr=0.08, n_iters=400, l2_reg=0.1)
+    model.fit(X_train, y_train)
+
+    prob = float(model.predict_proba(X_proc.values)[0, 1])
+
+    fair_path = os.path.join("models", "trained_models", "fairness_config.json")
+    fair_config = json.load(open(fair_path)) if os.path.exists(fair_path) else {}
+    fair_thresholds = fair_config.get("fair_thresholds", {"Female": 0.47, "Male": 0.46, "Other": 0.49, "Unknown": 0.60})
+
+    threshold = fair_thresholds.get(mapped_gender, 0.50)
+
+    if prob >= 0.8:
+        tier = "High Priority"
+        recommendation = "Immediate Interview"
+    elif prob >= 0.6:
+        tier = "Qualified"
+        recommendation = "Schedule Interview"
+    elif prob >= 0.4:
+        tier = "Extended"
+        recommendation = "Keep in Pipeline"
+    else:
+        tier = "Reserve"
+        recommendation = "Future Consideration"
+
+    import random
+    temp_id = f"RESUME-{random.randint(100000, 999999)}"
+
+    input_data["Candidate ID"] = temp_id
+    input_data["enrollee_id"] = temp_id
+    input_data["prediction_probability"] = prob
+    input_data["candidate_name"] = name
+
+    record = {
+        "candidate_id": temp_id,
+        "id": temp_id,
+        "candidate_name": name,
+        "source_filename": filename,
+        "timestamp": datetime.now().isoformat(),
+        "prob": prob,
+        "suitability_score": prob,
+        "priority_tier": tier,
+        "recommendation": recommendation,
+        "gender": mapped_gender,
+        "features": X_proc.values[0].tolist(),
+        "feature_names": prep.feature_names,
+        "raw_data": input_data,
+        "weights": list(model.weights),
+        "bias": float(model.bias),
+        "quality": qual,
+        "confidences": conf,
+        "warnings": warns,
+        "corrected_fields": {},
+        "status": "Pending",
+        "recruiter_notes": "",
+        "raw_text": text
+    }
+
+    _save_screening_result(record)
+    return record
+
 def render_resume_screening_page():
     """Phase 8 & 9: Resume Upload, Quality Validation & AI Screening"""
     t = ThemeManager.get()
@@ -5133,18 +5357,21 @@ def render_resume_screening_page():
         unsafe_allow_html=True
     )
 
-    # State management
-    if "resume_file_id" not in st.session_state:
-        st.session_state["resume_file_id"] = None
-        st.session_state["resume_text"] = ""
-        st.session_state["resume_fields"] = {}
-        st.session_state["resume_name"] = ""
-        st.session_state["resume_confidences"] = {}
-        st.session_state["resume_quality"] = {}
-        st.session_state["resume_warnings"] = []
-        st.session_state["resume_prediction"] = None
+    tab_single, tab_bulk = st.tabs(["📄 Single Resume Screening", "📦 Bulk Resume Batch Screening"])
 
-    uploaded_file = st.file_uploader("Upload Candidate Resume", type=["pdf", "docx", "txt"])
+    with tab_single:
+        # State management
+        if "resume_file_id" not in st.session_state:
+            st.session_state["resume_file_id"] = None
+            st.session_state["resume_text"] = ""
+            st.session_state["resume_fields"] = {}
+            st.session_state["resume_name"] = ""
+            st.session_state["resume_confidences"] = {}
+            st.session_state["resume_quality"] = {}
+            st.session_state["resume_warnings"] = []
+            st.session_state["resume_prediction"] = None
+
+        uploaded_file = st.file_uploader("Upload Candidate Resume", type=["pdf", "docx", "txt"])
 
     if uploaded_file:
         file_id = f"{uploaded_file.name}_{uploaded_file.size}"
@@ -5652,6 +5879,333 @@ def render_resume_screening_page():
 
                     st.markdown(audit_rows, unsafe_allow_html=True)
 
+    with tab_bulk:
+        st.markdown(
+            f'<div style="background:{t["card_bg"]};border:1px solid {t["card_border"]};border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:{t["card_shadow"]};">'
+            f'<div style="font-weight:700;font-size:1.05rem;color:{t["text_primary"]};margin-bottom:4px;">📦 Bulk Resume Batch Screening</div>'
+            f'<div style="font-size:0.85rem;color:{t["text_secondary"]};line-height:1.5;">'
+            f'Upload multiple candidate resumes simultaneously (PDF, DOCX, TXT). Each file will be parsed, validated for completeness, screened through the production ML pipeline, and automatically saved to <b>Screening History</b>.</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        bulk_files = st.file_uploader("Upload Multiple Resumes (Batch)", type=["pdf", "docx", "txt"], accept_multiple_files=True, key="bulk_resume_uploader")
+
+        if bulk_files:
+            st.info(f"📁 {len(bulk_files)} files selected for batch screening.")
+            if st.button("🚀 Process & Screen All Resumes", key="btn_run_bulk_screening"):
+                batch_results = []
+                errors = []
+                pbar = st.progress(0.0)
+                status_text = st.empty()
+
+                for idx, bf in enumerate(bulk_files):
+                    status_text.text(f"Processing {idx+1}/{len(bulk_files)}: {bf.name}...")
+                    pbar.progress((idx + 1) / len(bulk_files))
+                    try:
+                        res = _run_single_resume_screening(bf, bf.name)
+                        if "error" in res:
+                            errors.append((bf.name, res["error"]))
+                        else:
+                            batch_results.append(res)
+                    except Exception as ex:
+                        errors.append((bf.name, str(ex)))
+
+                pbar.progress(1.0)
+                status_text.success(f"✅ Batch completed! Successfully processed {len(batch_results)} of {len(bulk_files)} resumes.")
+
+                if errors:
+                    with st.expander("⚠️ Processing Warnings / Unreadable Files", expanded=True):
+                        for fname, err in errors:
+                            st.warning(f"File '{fname}': {err}")
+
+                if batch_results:
+                    st.markdown(f'<div class="section-header">📊 Batch Screening Summary</div>', unsafe_allow_html=True)
+                    summary_rows = []
+                    for r in batch_results:
+                        summary_rows.append({
+                            "Candidate ID": r["candidate_id"],
+                            "Candidate Name": r["candidate_name"],
+                            "Filename": r["source_filename"],
+                            "AI Suitability Score (%)": f"{r['prob']*100:.1f}",
+                            "Resume Quality (%)": r.get("quality", {}).get("quality_score", 0),
+                            "Priority Tier": r["priority_tier"],
+                            "Recommendation": r["recommendation"],
+                            "Status": r["status"]
+                        })
+
+                    sum_df = pd.DataFrame(summary_rows)
+                    st.dataframe(sum_df, use_container_width=True)
+
+                    csv_batch = sum_df.to_csv(index=False).encode("utf-8")
+                    st.download_button("📥 Download Batch Summary CSV", data=csv_batch, file_name="batch_screening_summary.csv", mime="text/csv", use_container_width=True)
+
+def _render_historical_screening_detail(rec: dict, t: dict):
+    """
+    Phase 10: Detailed view when a recruiter re-opens a historical candidate screening result.
+    """
+    cid = rec.get("candidate_id") or rec.get("id")
+    cname = rec.get("candidate_name") or "Name Not Detected"
+    prob = rec.get("prob") if rec.get("prob") is not None else rec.get("suitability_score", 0.0)
+    tier = rec.get("priority_tier", "Reserve")
+    recommendation = rec.get("recommendation", "Review Candidate")
+    status = rec.get("status", "Pending")
+    fname = rec.get("source_filename", "Uploaded Resume")
+    qual = rec.get("quality", {})
+    conf = rec.get("confidences", {})
+    raw_dict = rec.get("raw_data", {})
+    notes = rec.get("recruiter_notes", "")
+
+    top_left, top_right = st.columns([1, 4])
+    with top_left:
+        if st.button("← Back to History List", key="btn_back_to_history_list"):
+            st.session_state["view_history_id"] = None
+            st.rerun()
+
+    st.markdown(
+        f'<div class="section-header" style="text-align:center;font-size:1.4rem;">'
+        f'Historical Screening Result for {cname} ({cid})</div>',
+        unsafe_allow_html=True
+    )
+
+    with st.expander("📌 Recruiter Status & Notes Management", expanded=True):
+        sc1, sc2, sc3 = st.columns([2, 3, 1])
+        with sc1:
+            st_opts = ["Pending", "Shortlisted", "Rejected"]
+            st_idx = st_opts.index(status) if status in st_opts else 0
+            new_st = st.selectbox("Candidate Status", options=st_opts, index=st_idx, key=f"hist_status_select_{cid}")
+        with sc2:
+            new_notes = st.text_input("Recruiter Notes", value=notes, placeholder="Add private recruiter notes...", key=f"hist_notes_input_{cid}")
+        with sc3:
+            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+            if st.button("💾 Save Status", key=f"hist_save_btn_{cid}", use_container_width=True):
+                _update_screening_status(cid, new_st, new_notes)
+                rec["status"] = new_st
+                rec["recruiter_notes"] = new_notes
+                st.success("Status & notes saved successfully!")
+
+    tier_colors = {"High Priority": "#34d399", "Qualified": "#60a5fa", "Extended": "#fbbf24", "Reserve": "#f87171"}
+    color = tier_colors.get(tier, "#60a5fa")
+    res_q_score = qual.get("quality_score", 0)
+    res_q_badge = qual.get("status_badge", "⚠️ Review Recommended")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(f'<div class="kpi-card" style="text-align:center;"><div style="font-size:1.6rem;color:{color};font-weight:800;">{prob*100:.1f}%</div><div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;">AI Suitability Score</div></div>', unsafe_allow_html=True)
+    c2.markdown(f'<div class="kpi-card" style="text-align:center;"><div style="font-size:1.6rem;color:{t["text_primary"]};font-weight:800;">{res_q_score}%</div><div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;">Resume Quality ({res_q_badge})</div></div>', unsafe_allow_html=True)
+    c3.markdown(f'<div class="kpi-card" style="text-align:center;"><div style="font-size:1.3rem;color:{t["text_primary"]};font-weight:800;margin-top:2px;">{tier}</div><div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;">Priority Tier</div></div>', unsafe_allow_html=True)
+    c4.markdown(f'<div class="kpi-card" style="text-align:center;"><div style="font-size:1.05rem;color:{t["text_primary"]};font-weight:800;margin-top:4px;">{recommendation}</div><div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;margin-top:6px;">Recommendation</div></div>', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col_b1, col_b2, col_b3 = st.columns(3)
+    with col_b1:
+        if st.button("👤 View Candidate Profile", key=f"hist_view_prof_{cid}", use_container_width=True):
+            st.session_state["resume_candidate"] = raw_dict
+            st.session_state["view_profile_id"] = cid
+            st.session_state["nav_goto"] = "👤  Candidate Profile"
+            st.session_state.pop("nav_radio", None)
+            st.rerun()
+    with col_b2:
+        if st.button("⭐ Add to Shortlist", key=f"hist_shortlist_{cid}", use_container_width=True):
+            shortlist = _load_shortlist()
+            if not any(r.get("candidate_id") == cid for r in shortlist):
+                shortlist.append({
+                    "candidate_id": cid,
+                    "candidate_name": cname,
+                    "suitability_score": float(prob),
+                    "priority_tier": tier,
+                    "recommendation": recommendation,
+                    "timestamp": datetime.now().isoformat()
+                })
+                _save_shortlist(shortlist)
+                _update_screening_status(cid, "Shortlisted")
+            st.success("Candidate added to shortlist.")
+    with col_b3:
+        report_content = f"Historical Screening Report\nCandidate ID: {cid}\nCandidate Name: {cname}\nScore: {prob:.4f}\nTier: {tier}\nFile: {fname}\n"
+        st.download_button("📥 Download Report", data=report_content, file_name=f"{cid}_report.txt", mime="text/plain", use_container_width=True)
+
+    st.markdown(f'<div class="section-header">Why did FairHire AI make this recommendation?</div>', unsafe_allow_html=True)
+    if "features" in rec and "weights" in rec and "feature_names" in rec:
+        import numpy as np
+        import plotly.graph_objects as go
+        feat_names = rec["feature_names"]
+        features_val = np.array(rec["features"])
+        model_w = np.array(rec["weights"])
+        mean_vals = np.zeros(len(feat_names))
+        local_shap = model_w * (features_val - mean_vals)
+
+        local_shap_df = pd.DataFrame({"Feature": feat_names, "Importance": local_shap})
+        local_shap_df["Abs_Importance"] = local_shap_df["Importance"].abs()
+        merged = local_shap_df.sort_values("Abs_Importance", ascending=False).head(10).sort_values("Importance", ascending=True)
+        colors = ["#f87171" if val < 0 else "#34d399" for val in merged["Importance"]]
+        readable_labels = [_FEATURE_LABELS.get(f.rsplit("_",1)[0], f.replace("_"," ").title()) for f in merged["Feature"]]
+
+        fig = go.Figure(go.Bar(x=merged["Importance"], y=readable_labels, orientation='h', marker_color=colors))
+        fig.update_layout(margin=dict(l=0, r=0, t=30, b=0), height=300, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(title="Contribution to Score", gridcolor=t['divider'], zerolinecolor=t['text_muted']), yaxis=dict(gridcolor='rgba(0,0,0,0)'), font=dict(color=t['text_secondary']))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("🛡️ Data Extraction Trustworthiness & Audit Log", expanded=False):
+        audit_rows = ""
+        for fk, fval in raw_dict.items():
+            if fk in ["Candidate ID", "enrollee_id", "prediction_probability", "candidate_name"]:
+                continue
+            c_info = conf.get(fk, {})
+            bdg = c_info.get("badge", "⚪ Defaulted")
+            rsn = c_info.get("reason", "")
+            fk_title = fk.replace("_", " ").title()
+            audit_rows += f'<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid {t["divider"]};font-size:0.83rem;"><div><span style="font-weight:700;color:{t["text_primary"]};">{fk_title}</span>: <span style="color:{t["text_secondary"]};">{fval}</span></div><div style="text-align:right;"><span style="font-weight:700;">{bdg}</span><div style="font-size:0.72rem;color:{t["text_muted"]};">{rsn}</div></div></div>'
+        st.markdown(audit_rows, unsafe_allow_html=True)
+
+def render_screening_history_page():
+    """Phase 10: Resume Screening History & Persistence Dashboard"""
+    t = ThemeManager.get()
+
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:16px;padding:28px 32px;margin-bottom:24px;">'
+        f'<div style="display:flex;align-items:center;gap:14px;">'
+        f'<div style="font-size:2.4rem;">📜</div>'
+        f'<div><div style="color:{t["header_title"]};font-size:1.55rem;font-weight:800;'
+        f'letter-spacing:-0.02em;">Screening History & Audit Log</div>'
+        f'<div style="color:{t["header_sub"]};font-size:0.88rem;margin-top:3px;">'
+        f'Audit trail of all screened candidate resumes, status tracking, and historical reopen views.</div>'
+        f'</div></div></div>',
+        unsafe_allow_html=True
+    )
+
+    history = _load_screening_history()
+
+    view_id = st.session_state.get("view_history_id")
+    if view_id:
+        rec = next((item for item in history if (item.get("candidate_id") == view_id or item.get("id") == view_id)), None)
+        if rec:
+            _render_historical_screening_detail(rec, t)
+            return
+        else:
+            st.session_state["view_history_id"] = None
+
+    if not history:
+        st.info("No screened candidate resumes found in history yet. Upload and screen a resume in the 📄 Resume Screening page to create history records.")
+        return
+
+    import numpy as np
+    total_screened = len(history)
+    pending_cnt = sum(1 for r in history if r.get("status") == "Pending")
+    shortlist_cnt = sum(1 for r in history if r.get("status") == "Shortlisted")
+    rejected_cnt = sum(1 for r in history if r.get("status") == "Rejected")
+    avg_score = np.mean([r.get("prob", 0) for r in history]) if history else 0.0
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    kpis = [
+        (k1, "blue",  "📜", "Total Screened",  f"{total_screened:,}",  "All historical records"),
+        (k2, "amber", "⏳", "Pending Review",  f"{pending_cnt:,}",     "Awaiting action"),
+        (k3, "green", "⭐", "Shortlisted",     f"{shortlist_cnt:,}",   "Recruiter shortlisted"),
+        (k4, "red",   "❌", "Rejected",        f"{rejected_cnt:,}",    "Not pursuing"),
+        (k5, "teal",  "🎯", "Avg Suitability", f"{avg_score*100:.1f}%", "Mean model score"),
+    ]
+    for col, color, icon, label, value, sub in kpis:
+        with col:
+            st.markdown(
+                f'<div class="kpi-card {color}">'
+                f'<div class="kpi-icon">{icon}</div>'
+                f'<div class="kpi-label">{label}</div>'
+                f'<div class="kpi-value {color}">{value}</div>'
+                f'<div class="kpi-sub">{sub}</div></div>',
+                unsafe_allow_html=True
+            )
+
+    st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+    st.markdown(f'<div class="section-header">🔎 Search & Filter Screening History</div>', unsafe_allow_html=True)
+
+    f1, f2, f3 = st.columns([2, 2, 2])
+    with f1:
+        search_query = st.text_input("🔍 Search Candidate Name or ID", placeholder="e.g. Tejaswini or RESUME-123456", label_visibility="collapsed")
+    with f2:
+        sel_status = st.selectbox("Status Filter", options=["All Statuses", "Pending", "Shortlisted", "Rejected"], label_visibility="collapsed")
+    with f3:
+        sel_tier = st.selectbox("Tier Filter", options=["All Tiers", "High Priority", "Qualified", "Extended", "Reserve"], label_visibility="collapsed")
+
+    filtered = history.copy()
+    if search_query.strip():
+        q = search_query.strip().lower()
+        filtered = [r for r in filtered if q in str(r.get("candidate_name", "")).lower() or q in str(r.get("candidate_id", "")).lower() or q in str(r.get("source_filename", "")).lower()]
+
+    if sel_status != "All Statuses":
+        filtered = [r for r in filtered if r.get("status") == sel_status]
+
+    if sel_tier != "All Tiers":
+        filtered = [r for r in filtered if r.get("priority_tier") == sel_tier]
+
+    filtered.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+
+    st.markdown(f'<div style="font-size:0.85rem;color:{t["text_secondary"]};margin:12px 0 16px 0;">'
+                f'Showing <strong style="color:{t["text_primary"]};">{len(filtered)}</strong> of <strong style="color:{t["text_primary"]};">{total_screened}</strong> screening records</div>', unsafe_allow_html=True)
+
+    st.markdown(f'<div class="section-header">📋 Historical Screening Records</div>', unsafe_allow_html=True)
+
+    for r in filtered:
+        cid = r.get("candidate_id") or r.get("id")
+        cname = r.get("candidate_name") or "Name Not Detected"
+        prob = r.get("prob") if r.get("prob") is not None else r.get("suitability_score", 0.0)
+        tier = r.get("priority_tier", "Reserve")
+        st_val = r.get("status", "Pending")
+        fname = r.get("source_filename", "Uploaded Resume")
+        q_score = r.get("quality", {}).get("quality_score") or r.get("resume_quality_score", 0)
+        ts = r.get("timestamp", "")[:16].replace("T", " ")
+
+        status_color_map = {
+            "Shortlisted": ("#10b981", "rgba(16,185,129,0.1)", "rgba(16,185,129,0.3)"),
+            "Pending":     ("#f59e0b", "rgba(245,158,11,0.1)", "rgba(245,158,11,0.3)"),
+            "Rejected":    ("#ef4444", "rgba(239,68,68,0.1)",  "rgba(239,68,68,0.3)")
+        }
+        s_clr, s_bg, s_bd = status_color_map.get(st_val, ("#6b7280", "rgba(107,114,128,0.1)", "rgba(107,114,128,0.3)"))
+
+        with st.container():
+            col_a, col_b, col_c, col_d, col_e, col_f = st.columns([2.5, 1.5, 1.5, 1.5, 1.5, 1.5])
+            with col_a:
+                st.markdown(f'<div style="font-weight:700;color:{t["text_primary"]};font-size:0.95rem;">{cname}</div>'
+                            f'<div style="font-size:0.75rem;color:{t["text_muted"]};">ID: {cid} · {fname}</div>', unsafe_allow_html=True)
+            with col_b:
+                st.markdown(f'<div style="font-weight:800;color:{t["text_primary"]};font-size:1.05rem;">{prob*100:.1f}%</div>'
+                            f'<div style="font-size:0.7rem;color:{t["text_muted"]};">AI Suitability</div>', unsafe_allow_html=True)
+            with col_c:
+                st.markdown(f'<div style="font-weight:800;color:{t["text_primary"]};font-size:1.05rem;">{q_score}%</div>'
+                            f'<div style="font-size:0.7rem;color:{t["text_muted"]};">Resume Quality</div>', unsafe_allow_html=True)
+            with col_d:
+                st.markdown(f'<div style="font-weight:700;color:{t["text_primary"]};font-size:0.85rem;">{tier}</div>'
+                            f'<div style="font-size:0.7rem;color:{t["text_muted"]};">{ts}</div>', unsafe_allow_html=True)
+            with col_e:
+                st.markdown(f'<span style="background:{s_bg};color:{s_clr};border:1px solid {s_bd};'
+                            f'padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:700;">{st_val}</span>', unsafe_allow_html=True)
+            with col_f:
+                if st.button("👁️ View Details", key=f"hist_btn_{cid}", use_container_width=True):
+                    st.session_state["view_history_id"] = cid
+                    st.rerun()
+
+            st.markdown(f'<hr style="border-color:{t["divider"]};margin:8px 0 12px 0;">', unsafe_allow_html=True)
+
+    st.markdown(f'<div class="section-header">⬇️ Export Screening History</div>', unsafe_allow_html=True)
+    exp1, exp2 = st.columns(2)
+    with exp1:
+        export_list = []
+        for r in filtered:
+            export_list.append({
+                "Candidate ID": r.get("candidate_id") or r.get("id"),
+                "Candidate Name": r.get("candidate_name"),
+                "Filename": r.get("source_filename"),
+                "AI Suitability Score (%)": f"{r.get('prob', 0)*100:.1f}",
+                "Resume Quality Score (%)": r.get("quality", {}).get("quality_score", 0),
+                "Priority Tier": r.get("priority_tier"),
+                "Recommendation": r.get("recommendation"),
+                "Status": r.get("status"),
+                "Timestamp": r.get("timestamp")
+            })
+        csv_data = pd.DataFrame(export_list).to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download History CSV", data=csv_data, file_name="resume_screening_history.csv", mime="text/csv", use_container_width=True)
+    with exp2:
+        json_data = json.dumps(history, indent=2).encode("utf-8")
+        st.download_button("📦 Download History JSON", data=json_data, file_name="resume_screening_history.json", mime="application/json", use_container_width=True)
+
 def render_settings_page():
     t = ThemeManager.get()
 
@@ -5817,6 +6371,7 @@ _NAV_OPTIONS = [
     "🔍  SHAP Explainability",
     "🚀  Real-Time Predictor",
     "📄  Resume Screening",
+    "📜  Screening History",
     "─────────────",
     "💼  Job Descriptions",
     "👤  Candidate Profile",
@@ -5927,6 +6482,8 @@ def main():
         render_explainability_page()
     elif "Predictor" in page:
         render_prediction_page()
+    elif "Screening History" in page:
+        render_screening_history_page()
     elif "Resume" in page:
         render_resume_screening_page()
     elif "Settings" in page:
