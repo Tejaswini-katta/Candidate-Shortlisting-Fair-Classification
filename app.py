@@ -4713,7 +4713,8 @@ def _extract_candidate_name(text: str) -> str:
         "resume", "cv", "curriculum", "vitae", "summary", "experience", "education",
         "work", "project", "profile", "about", "contact", "phone", "email",
         "skills", "objective", "certifications", "interests", "languages",
-        "candidate", "information", "details", "personal", "history"
+        "candidate", "information", "details", "personal", "history",
+        "interested", "role", "roles", "seeking", "looking", "experienced", "worked"
     }
     
     for line in lines[:4]:
@@ -4836,8 +4837,274 @@ def _extract_candidate_fields(text: str) -> dict:
 
     return fields
 
+def _calculate_field_confidences(text: str, fields: dict, candidate_name: str) -> dict:
+    """
+    Phase 9: Compute deterministic extraction confidence (High, Medium, Low)
+    for every candidate field based on rule-based evidence in resume text.
+    """
+    text_lower = (text or "").lower()
+    confidences = {}
+
+    # Candidate Name
+    if candidate_name and candidate_name != "Name Not Detected":
+        if any(h in text_lower for h in ["name:", "full name:", "candidate name:"]):
+            confidences["candidate_name"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Explicit name header matched"}
+        else:
+            confidences["candidate_name"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Extracted from prominent heading line"}
+    else:
+        confidences["candidate_name"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "Candidate name not detected"}
+
+    # Education Level
+    edu = fields.get("education_level")
+    if edu and edu != "Unknown":
+        if any(k in text_lower for k in ["phd", "ph.d", "doctorate", "masters", "m.s", "mba", "bachelors", "b.tech", "b.s", "b.a", "degree", "high school", "primary school"]):
+            confidences["education_level"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Explicit degree qualification matched"}
+        else:
+            confidences["education_level"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Inferred from education context"}
+    else:
+        confidences["education_level"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No education degree keyword found"}
+
+    # Major Discipline
+    maj = fields.get("major_discipline")
+    if maj and maj != "Unknown":
+        if any(k in text_lower for k in ["computer science", "software engineering", "business administration", "finance", "accounting", "fine arts", "humanities"]):
+            confidences["major_discipline"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Explicit major / discipline matched"}
+        elif any(k in text_lower for k in ["computer", "science", "engineering", "math", "technology", "stem", "business", "management"]):
+            confidences["major_discipline"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Field of study inferred from generic keywords"}
+        else:
+            confidences["major_discipline"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "Weak major discipline match"}
+    else:
+        confidences["major_discipline"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No major discipline detected"}
+
+    # Relevant Experience
+    rel = fields.get("relevent_experience")
+    if rel == "Has relevent experience":
+        if any(k in text_lower for k in ["data scientist", "machine learning", "data engineer", "software engineer", "developer", "analyst"]):
+            confidences["relevent_experience"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Matching industry role title found"}
+        else:
+            confidences["relevent_experience"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Inferred from project description"}
+    else:
+        confidences["relevent_experience"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No explicit relevant tech role found"}
+
+    # Experience Years
+    exp = fields.get("experience")
+    if exp:
+        if "years" in text_lower or "yrs" in text_lower:
+            confidences["experience"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Explicit years of experience matched"}
+        elif any(k in text_lower for k in ["senior", "lead", "principal", "experienced", "developer"]):
+            confidences["experience"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Inferred from role seniority keywords"}
+        else:
+            confidences["experience"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "Default duration assigned"}
+    else:
+        confidences["experience"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No experience duration detected"}
+
+    # Enrolled University
+    uni = fields.get("enrolled_university")
+    if uni and uni != "Unknown":
+        if any(k in text_lower for k in ["university", "college", "institute"]):
+            confidences["enrolled_university"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Academic institution match found"}
+        else:
+            confidences["enrolled_university"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Enrollment status inferred"}
+    else:
+        confidences["enrolled_university"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No university enrollment status detected"}
+
+    # Company Type
+    comp_type = fields.get("company_type")
+    if comp_type and comp_type != "Unknown":
+        if any(k in text_lower for k in ["startup", "start-up", "public sector", "government", "ngo", "non-profit", "pvt ltd", "private limited", "inc"]):
+            confidences["company_type"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Explicit organization type matched"}
+        else:
+            confidences["company_type"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Company type inferred from context"}
+    else:
+        confidences["company_type"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No company type detected"}
+
+    # Company Size
+    comp_size = fields.get("company_size")
+    if comp_size and comp_size != "Unknown":
+        if any(k in text_lower for k in ["employees", "headcount", "staff", "team size"]):
+            confidences["company_size"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Explicit headcount metric matched"}
+        else:
+            confidences["company_size"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Company size inferred from company type"}
+    else:
+        confidences["company_size"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No company size detected"}
+
+    # Last New Job
+    last_job = fields.get("last_new_job")
+    if last_job and last_job != "Unknown":
+        if any(k in text_lower for k in ["previous job", "former role", "last position", "changed job"]):
+            confidences["last_new_job"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Job transition history matched"}
+        else:
+            confidences["last_new_job"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Job change frequency inferred"}
+    else:
+        confidences["last_new_job"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "No job transition duration detected"}
+
+    # Training Hours
+    train_hrs = fields.get("training_hours")
+    if train_hrs is not None:
+        if any(k in text_lower for k in ["training hours", "course hours", "hours of training", "certificat"]):
+            confidences["training_hours"] = {"level": "High", "badge": "🟢 High Confidence", "reason": "Explicit training hours matched"}
+        else:
+            confidences["training_hours"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "Default training hours assigned"}
+    else:
+        confidences["training_hours"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "Training hours missing"}
+
+    # City Development Index (CDI)
+    cdi = fields.get("city_development_index")
+    if cdi is not None:
+        if any(k in text_lower for k in ["city", "location", "based in", "cdi"]):
+            confidences["city_development_index"] = {"level": "Medium", "badge": "🟡 Medium Confidence", "reason": "Location context inferred"}
+        else:
+            confidences["city_development_index"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "Default CDI score assigned"}
+    else:
+        confidences["city_development_index"] = {"level": "Low", "badge": "🔴 Low Confidence", "reason": "City development index missing"}
+
+    # Gender (Strict Privacy Rule)
+    confidences["gender"] = {"level": "High", "badge": "🟢 High (Protected)", "reason": "Privacy rule: Gender remains 'Not Provided'"}
+
+    return confidences
+
+def _calculate_resume_quality_score(text: str, fields: dict, confidences: dict, candidate_name: str) -> dict:
+    """
+    Phase 9: Compute a deterministic 0-100% Resume Quality Score.
+    Completely separate from Candidate Suitability Score (ML probability).
+    """
+    score = 0
+    
+    text_len = len(text or "")
+    if text_len >= 500:
+        score += 20
+    elif text_len >= 200:
+        score += 10
+    elif text_len > 0:
+        score += 5
+
+    # Candidate Name (15 pts)
+    if candidate_name and candidate_name != "Name Not Detected":
+        score += 15
+        
+    # Education (20 pts)
+    edu_conf = confidences.get("education_level", {}).get("level")
+    if edu_conf == "High":
+        score += 20
+    elif edu_conf == "Medium":
+        score += 10
+        
+    # Experience (20 pts)
+    exp_conf = confidences.get("experience", {}).get("level")
+    if exp_conf == "High":
+        score += 20
+    elif exp_conf == "Medium":
+        score += 10
+        
+    # Major Discipline (10 pts)
+    maj_conf = confidences.get("major_discipline", {}).get("level")
+    if maj_conf == "High":
+        score += 10
+    elif maj_conf == "Medium":
+        score += 5
+        
+    # Relevant Experience & Tech Skills (15 pts)
+    rel_conf = confidences.get("relevent_experience", {}).get("level")
+    if rel_conf == "High":
+        score += 15
+    elif rel_conf == "Medium":
+        score += 8
+
+    score = max(0, min(100, score))
+
+    if score >= 80:
+        status_label = "Valid"
+        status_badge = "✅ Valid"
+        badge_color = "#10b981"
+        badge_bg = "rgba(16,185,129,0.1)"
+        border_color = "rgba(16,185,129,0.3)"
+    elif score >= 50:
+        status_label = "Review Recommended"
+        status_badge = "⚠️ Review Recommended"
+        badge_color = "#f59e0b"
+        badge_bg = "rgba(245,158,11,0.1)"
+        border_color = "rgba(245,158,11,0.3)"
+    else:
+        status_label = "Missing Critical Information"
+        status_badge = "❌ Missing Critical Information"
+        badge_color = "#ef4444"
+        badge_bg = "rgba(239,68,68,0.1)"
+        border_color = "rgba(239,68,68,0.3)"
+
+    return {
+        "quality_score": score,
+        "status_label": status_label,
+        "status_badge": status_badge,
+        "badge_color": badge_color,
+        "badge_bg": badge_bg,
+        "border_color": border_color
+    }
+
+def _generate_validation_warnings(text: str, fields: dict, confidences: dict, candidate_name: str, quality: dict) -> list:
+    """
+    Phase 9: Generate validation warnings and recommendations prior to screening.
+    """
+    warnings = []
+
+    if not text or len(text) < 150:
+        warnings.append({
+            "category": "danger",
+            "icon": "❌",
+            "field": "Resume Content",
+            "title": "Very Short Resume Content",
+            "message": "The extracted resume text is very brief. Ensure a text-based PDF, DOCX, or TXT document was uploaded."
+        })
+
+    if not candidate_name or candidate_name == "Name Not Detected":
+        warnings.append({
+            "category": "warning",
+            "icon": "⚠️",
+            "field": "Candidate Name",
+            "title": "Candidate Name Not Detected",
+            "message": "Candidate name could not be automatically detected. Recruiter verification recommended."
+        })
+
+    if confidences.get("education_level", {}).get("level") == "Low":
+        warnings.append({
+            "category": "warning",
+            "icon": "⚠️",
+            "field": "Education Level",
+            "title": "Education Level Missing",
+            "message": "No explicit degree was detected. Please select the correct education level before screening."
+        })
+
+    if confidences.get("experience", {}).get("level") == "Low":
+        warnings.append({
+            "category": "warning",
+            "icon": "⚠️",
+            "field": "Years of Experience",
+            "title": "Experience Duration Uncertain",
+            "message": "Years of experience duration could not be extracted with high confidence."
+        })
+
+    if confidences.get("major_discipline", {}).get("level") == "Low":
+        warnings.append({
+            "category": "info",
+            "icon": "ℹ️",
+            "field": "Major Discipline",
+            "title": "Major / Discipline Missing",
+            "message": "Major discipline not explicitly detected in resume text."
+        })
+
+    low_fields = [k for k, v in confidences.items() if v.get("level") == "Low" and k != "gender"]
+    if len(low_fields) >= 3:
+        warnings.append({
+            "category": "info",
+            "icon": "ℹ️",
+            "field": "Field Completeness",
+            "title": f"{len(low_fields)} Fields Need Verification",
+            "message": f"Multiple fields defaulted to low-confidence values ({', '.join(low_fields[:3])}). Review form entries below."
+        })
+
+    return warnings
+
 def render_resume_screening_page():
-    """Phase 8: Resume Upload & AI Screening"""
+    """Phase 8 & 9: Resume Upload, Quality Validation & AI Screening"""
     t = ThemeManager.get()
 
     # ── Page header ───────────────────────────────────────────────────────────
@@ -4872,6 +5139,9 @@ def render_resume_screening_page():
         st.session_state["resume_text"] = ""
         st.session_state["resume_fields"] = {}
         st.session_state["resume_name"] = ""
+        st.session_state["resume_confidences"] = {}
+        st.session_state["resume_quality"] = {}
+        st.session_state["resume_warnings"] = []
         st.session_state["resume_prediction"] = None
 
     uploaded_file = st.file_uploader("Upload Candidate Resume", type=["pdf", "docx", "txt"])
@@ -4884,15 +5154,31 @@ def render_resume_screening_page():
             st.session_state["resume_file_id"] = file_id
             st.session_state["resume_prediction"] = None # Reset prediction
             
-            with st.spinner("Extracting text..."):
+            with st.spinner("Extracting text and validating resume..."):
                 text = _extract_resume_text(uploaded_file, uploaded_file.name)
                 st.session_state["resume_text"] = text
                 if text:
-                    st.session_state["resume_fields"] = _extract_candidate_fields(text)
-                    st.session_state["resume_name"] = _extract_candidate_name(text)
+                    fields = _extract_candidate_fields(text)
+                    name = _extract_candidate_name(text)
+                    conf = _calculate_field_confidences(text, fields, name)
+                    qual = _calculate_resume_quality_score(text, fields, conf, name)
+                    warns = _generate_validation_warnings(text, fields, conf, name, qual)
+
+                    st.session_state["resume_fields"] = fields
+                    st.session_state["resume_name"] = name
+                    st.session_state["resume_confidences"] = conf
+                    st.session_state["resume_quality"] = qual
+                    st.session_state["resume_warnings"] = warns
                 else:
                     st.session_state["resume_fields"] = {}
                     st.session_state["resume_name"] = "Name Not Detected"
+                    st.session_state["resume_confidences"] = {}
+                    st.session_state["resume_quality"] = {
+                        "quality_score": 0, "status_label": "Unreadable",
+                        "status_badge": "❌ Unreadable", "badge_color": "#ef4444",
+                        "badge_bg": "rgba(239,68,68,0.1)", "border_color": "rgba(239,68,68,0.3)"
+                    }
+                    st.session_state["resume_warnings"] = []
 
         if not st.session_state["resume_text"]:
             st.error("Unable to extract text from this resume. Please upload a text-based PDF, DOCX, or TXT file.")
@@ -4900,6 +5186,64 @@ def render_resume_screening_page():
 
         with st.expander("📄 Extracted Resume Text", expanded=False):
             st.text_area("Raw Text", value=st.session_state["resume_text"], height=200, disabled=True, label_visibility="collapsed")
+
+        # ── Phase 9: Resume Validation Summary ──────────────────────────────
+        qual = st.session_state.get("resume_quality", {})
+        conf = st.session_state.get("resume_confidences", {})
+        warns = st.session_state.get("resume_warnings", [])
+        cand_name = st.session_state.get("resume_name", "Name Not Detected")
+
+        high_cnt = sum(1 for v in conf.values() if v.get("level") == "High" and v != "gender")
+        med_cnt  = sum(1 for v in conf.values() if v.get("level") == "Medium")
+        low_cnt  = sum(1 for v in conf.values() if v.get("level") == "Low")
+        extracted_cnt = sum(1 for k, v in st.session_state.get("resume_fields", {}).items() if v is not None and v != "Unknown" and k != "gender")
+
+        q_score = qual.get("quality_score", 0)
+        st_badge = qual.get("status_badge", "⚠️ Review Recommended")
+        b_clr = qual.get("badge_color", "#f59e0b")
+        b_bg = qual.get("badge_bg", "rgba(245,158,11,0.1)")
+        b_bd = qual.get("border_color", "rgba(245,158,11,0.3)")
+
+        st.markdown(
+            f'<div style="background:{t["card_bg"]};border:1px solid {t["card_border"]};'
+            f'border-radius:14px;padding:20px;margin:16px 0 20px 0;box-shadow:{t["card_shadow"]};">'
+            f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+            f'<div style="font-weight:700;font-size:1.05rem;color:{t["text_primary"]};display:flex;align-items:center;gap:8px;">'
+            f'🛡️ Resume Validation & Completeness</div>'
+            f'<span style="background:{b_bg};color:{b_clr};border:1px solid {b_bd};'
+            f'padding:4px 14px;border-radius:20px;font-size:0.8rem;font-weight:700;">'
+            f'{st_badge}</span></div>'
+            
+            f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
+            f'<div style="background:{t["metric_bg"]};border:1px solid {t["metric_border"]};border-radius:10px;padding:12px;text-align:center;">'
+            f'<div style="font-size:1.4rem;font-weight:800;color:{b_clr};">{q_score}%</div>'
+            f'<div style="font-size:0.7rem;font-weight:700;color:{t["text_muted"]};text-transform:uppercase;">Resume Quality Score</div>'
+            f'</div>'
+            f'<div style="background:{t["metric_bg"]};border:1px solid {t["metric_border"]};border-radius:10px;padding:12px;text-align:center;">'
+            f'<div style="font-size:1.05rem;font-weight:700;color:{t["text_primary"]};margin-top:2px;">{cand_name}</div>'
+            f'<div style="font-size:0.7rem;font-weight:700;color:{t["text_muted"]};text-transform:uppercase;">Detected Candidate Name</div>'
+            f'</div>'
+            f'<div style="background:{t["metric_bg"]};border:1px solid {t["metric_border"]};border-radius:10px;padding:12px;text-align:center;">'
+            f'<div style="font-size:1.4rem;font-weight:800;color:{t["text_primary"]};">{extracted_cnt} / 10</div>'
+            f'<div style="font-size:0.7rem;font-weight:700;color:{t["text_muted"]};text-transform:uppercase;">Fields Extracted</div>'
+            f'</div>'
+            f'<div style="background:{t["metric_bg"]};border:1px solid {t["metric_border"]};border-radius:10px;padding:12px;text-align:center;">'
+            f'<div style="font-size:0.85rem;font-weight:700;color:{t["text_primary"]};margin-top:4px;">🟢 {high_cnt} · 🟡 {med_cnt} · 🔴 {low_cnt}</div>'
+            f'<div style="font-size:0.7rem;font-weight:700;color:{t["text_muted"]};text-transform:uppercase;">Confidence Breakdown</div>'
+            f'</div>'
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+
+        if warns:
+            with st.expander("⚠️ Resume Validation Guidance & Warnings", expanded=False):
+                for w in warns:
+                    st.markdown(
+                        f'<div style="margin:4px 0;font-size:0.85rem;color:{t["text_secondary"]};line-height:1.5;">'
+                        f'<b>{w["icon"]} {w["title"]}</b> ({w["field"]}): {w["message"]}'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
 
         # ── Form logic ────────────────────────────────────────────────────────
         st.markdown(f'<div class="section-header">🔍 Review Candidate Information</div>', unsafe_allow_html=True)
@@ -4916,37 +5260,41 @@ def render_resume_screening_page():
                 edu_opts = ["Unknown", "Primary School", "High School", "Graduate", "Masters", "Phd"]
                 if fields.get("education_level") in edu_opts:
                     edu_idx = edu_opts.index(fields["education_level"])
-                label = "✓ Extracted: Education Level" if fields.get("education_level") else "⚠ Needs Review: Education Level"
-                f_edu = st.selectbox(label, edu_opts, index=edu_idx)
+                c_badge = conf.get("education_level", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("education_level", {}).get("reason", "")
+                f_edu = st.selectbox(f"Education Level  ({c_badge})", edu_opts, index=edu_idx, help=c_rsn)
 
                 # Major Discipline
                 maj_idx = 0
                 maj_opts = ["Unknown", "STEM", "Business Degree", "Arts", "Humanities", "No Major", "Other"]
                 if fields.get("major_discipline") in maj_opts:
                     maj_idx = maj_opts.index(fields["major_discipline"])
-                label = "✓ Extracted: Major / Discipline" if fields.get("major_discipline") else "⚠ Needs Review: Major / Discipline"
-                f_maj = st.selectbox(label, maj_opts, index=maj_idx)
+                c_badge = conf.get("major_discipline", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("major_discipline", {}).get("reason", "")
+                f_maj = st.selectbox(f"Major / Discipline  ({c_badge})", maj_opts, index=maj_idx, help=c_rsn)
                 
                 # Relevant Experience
                 rel_idx = 0
                 rel_opts = ["No relevent experience", "Has relevent experience"]
                 if fields.get("relevent_experience") in rel_opts:
                     rel_idx = rel_opts.index(fields["relevent_experience"])
-                label = "✓ Extracted: Relevant Experience" if fields.get("relevent_experience") else "⚠ Needs Review: Relevant Experience"
-                f_rel = st.selectbox(label, rel_opts, index=rel_idx)
+                c_badge = conf.get("relevent_experience", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("relevent_experience", {}).get("reason", "")
+                f_rel = st.selectbox(f"Relevant Experience  ({c_badge})", rel_opts, index=rel_idx, help=c_rsn)
 
                 # Enrolled University
                 uni_idx = 0
                 uni_opts = ["Unknown", "no_enrollment", "Full time course", "Part time course"]
                 if fields.get("enrolled_university") in uni_opts:
                     uni_idx = uni_opts.index(fields["enrolled_university"])
-                label = "✓ Extracted: University Enrollment" if fields.get("enrolled_university") else "⚠ Needs Review: University Enrollment"
-                f_uni = st.selectbox(label, uni_opts, index=uni_idx)
+                c_badge = conf.get("enrolled_university", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("enrolled_university", {}).get("reason", "")
+                f_uni = st.selectbox(f"University Enrollment  ({c_badge})", uni_opts, index=uni_idx, help=c_rsn)
                 
                 # Gender
                 gen_idx = 0
                 gen_opts = ["Not Provided", "Male", "Female", "Other"]
-                f_gen = st.selectbox("⚠ Needs Review: Gender (Fairness Requirement)", gen_opts, index=gen_idx)
+                f_gen = st.selectbox("Gender  (🟢 Protected — Not Inferred)", gen_opts, index=gen_idx, help="Privacy enforcement: Gender is not extracted or inferred from resume text.")
                 
             with col2:
                 # Experience
@@ -4954,39 +5302,45 @@ def render_resume_screening_page():
                 exp_opts = ["<1", "1-20", ">20"]
                 if fields.get("experience") in exp_opts:
                     exp_idx = exp_opts.index(fields["experience"])
-                label = "✓ Extracted: Years of Experience" if fields.get("experience") else "⚠ Needs Review: Years of Experience"
-                f_exp = st.selectbox(label, exp_opts, index=exp_idx)
+                c_badge = conf.get("experience", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("experience", {}).get("reason", "")
+                f_exp = st.selectbox(f"Years of Experience  ({c_badge})", exp_opts, index=exp_idx, help=c_rsn)
                 
                 # Company Size
                 size_idx = 0
                 size_opts = ["Unknown", "<10", "10-49", "50-99", "100-500", "500-999", "1000-4999", "5000-9999", "10000+"]
                 if fields.get("company_size") in size_opts:
                     size_idx = size_opts.index(fields["company_size"])
-                label = "✓ Extracted: Company Size" if fields.get("company_size") else "⚠ Needs Review: Company Size"
-                f_size = st.selectbox(label, size_opts, index=size_idx)
+                c_badge = conf.get("company_size", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("company_size", {}).get("reason", "")
+                f_size = st.selectbox(f"Company Size  ({c_badge})", size_opts, index=size_idx, help=c_rsn)
                 
                 # Company Type
                 type_idx = 0
                 type_opts = ["Unknown", "Pvt Ltd", "Funded Startup", "Early Stage Startup", "Public Sector", "NGO", "Other"]
                 if fields.get("company_type") in type_opts:
                     type_idx = type_opts.index(fields["company_type"])
-                label = "✓ Extracted: Company Type" if fields.get("company_type") else "⚠ Needs Review: Company Type"
-                f_type = st.selectbox(label, type_opts, index=type_idx)
+                c_badge = conf.get("company_type", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("company_type", {}).get("reason", "")
+                f_type = st.selectbox(f"Company Type  ({c_badge})", type_opts, index=type_idx, help=c_rsn)
                 
                 # Last New Job
                 job_idx = 0
                 job_opts = ["never", "1", "2", "3", "4", ">4"]
                 if fields.get("last_new_job") in job_opts:
                     job_idx = job_opts.index(fields["last_new_job"])
-                label = "✓ Extracted: Years Since Last Job" if fields.get("last_new_job") else "⚠ Needs Review: Years Since Last Job"
-                f_job = st.selectbox(label, job_opts, index=job_idx)
+                c_badge = conf.get("last_new_job", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("last_new_job", {}).get("reason", "")
+                f_job = st.selectbox(f"Years Since Last Job  ({c_badge})", job_opts, index=job_idx, help=c_rsn)
 
                 # Numeric Inputs
-                label = "✓ Extracted: Training Hours" if fields.get("training_hours") is not None else "⚠ Needs Review: Training Hours"
-                f_train = st.number_input(label, min_value=1, max_value=500, value=fields.get("training_hours") or 50)
+                c_badge = conf.get("training_hours", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("training_hours", {}).get("reason", "")
+                f_train = st.number_input(f"Training Hours  ({c_badge})", min_value=1, max_value=500, value=fields.get("training_hours") or 50, help=c_rsn)
                 
-                label = "✓ Extracted: City Development Index" if fields.get("city_development_index") is not None else "⚠ Needs Review: City Development Index"
-                f_cdi = st.number_input(label, min_value=0.0, max_value=1.0, value=fields.get("city_development_index") or 0.850, step=0.01)
+                c_badge = conf.get("city_development_index", {}).get("badge", "🔴 Low Confidence")
+                c_rsn = conf.get("city_development_index", {}).get("reason", "")
+                f_cdi = st.number_input(f"City Development Index  ({c_badge})", min_value=0.0, max_value=1.0, value=fields.get("city_development_index") or 0.850, step=0.01, help=c_rsn)
 
             st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
             submit = st.form_submit_button("🚀 Screen Candidate")
@@ -5056,6 +5410,25 @@ def render_resume_screening_page():
                     
                     st.session_state["resume_candidate"] = input_data
                     
+                    corrected = {}
+                    orig = st.session_state.get("resume_fields", {})
+                    field_map = {
+                        "education_level": f_edu,
+                        "major_discipline": f_maj,
+                        "relevent_experience": f_rel,
+                        "enrolled_university": f_uni,
+                        "experience": f_exp,
+                        "company_size": f_size,
+                        "company_type": f_type,
+                        "last_new_job": f_job,
+                        "training_hours": f_train,
+                        "city_development_index": f_cdi
+                    }
+                    for k, val in field_map.items():
+                        orig_val = orig.get(k)
+                        if orig_val is not None and str(val) != str(orig_val):
+                            corrected[k] = {"from": orig_val, "to": val, "badge": "✏️ Recruiter Corrected"}
+
                     st.session_state["resume_prediction"] = {
                         "id": temp_id,
                         "prob": prob,
@@ -5064,7 +5437,10 @@ def render_resume_screening_page():
                         "feature_names": prep.feature_names,
                         "raw_data": input_data,
                         "weights": list(model.weights),
-                        "bias": float(model.bias)
+                        "bias": float(model.bias),
+                        "quality": st.session_state.get("resume_quality", {}),
+                        "confidences": st.session_state.get("resume_confidences", {}),
+                        "corrected_fields": corrected
                     }
                 except Exception as e:
                     st.error(f"Screening Error: {str(e)}")
@@ -5112,27 +5488,41 @@ def render_resume_screening_page():
                 unsafe_allow_html=True
             )
             
-            c1, c2, c3 = st.columns(3)
+            res_q_score = p_data.get("quality", {}).get("quality_score", 0)
+            res_q_badge = p_data.get("quality", {}).get("status_badge", "⚠️ Review Recommended")
+
+            c1, c2, c3, c4 = st.columns(4)
             c1.markdown(
                 f'<div class="kpi-card" style="text-align:center;">'
-                f'<div style="font-size:1.8rem;color:{color};font-weight:800;">{prob*100:.1f}%</div>'
-                f'<div style="color:{t["text_muted"]};font-size:0.75rem;font-weight:700;text-transform:uppercase;">Suitability Score</div>'
+                f'<div style="font-size:1.6rem;color:{color};font-weight:800;">{prob*100:.1f}%</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;">AI Suitability Score</div>'
                 f'</div>', unsafe_allow_html=True
             )
             c2.markdown(
                 f'<div class="kpi-card" style="text-align:center;">'
-                f'<div style="font-size:1.4rem;color:{t["text_primary"]};font-weight:800;">{tier}</div>'
-                f'<div style="color:{t["text_muted"]};font-size:0.75rem;font-weight:700;text-transform:uppercase;">Priority Tier</div>'
+                f'<div style="font-size:1.6rem;color:{t["text_primary"]};font-weight:800;">{res_q_score}%</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;">Resume Quality ({res_q_badge})</div>'
                 f'</div>', unsafe_allow_html=True
             )
             c3.markdown(
                 f'<div class="kpi-card" style="text-align:center;">'
-                f'<div style="font-size:1.1rem;color:{t["text_primary"]};font-weight:800;margin-top:4px;">{recommendation}</div>'
-                f'<div style="color:{t["text_muted"]};font-size:0.75rem;font-weight:700;text-transform:uppercase;margin-top:6px;">Recommendation</div>'
+                f'<div style="font-size:1.3rem;color:{t["text_primary"]};font-weight:800;margin-top:2px;">{tier}</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;">Priority Tier</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+            c4.markdown(
+                f'<div class="kpi-card" style="text-align:center;">'
+                f'<div style="font-size:1.05rem;color:{t["text_primary"]};font-weight:800;margin-top:4px;">{recommendation}</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.72rem;font-weight:700;text-transform:uppercase;margin-top:6px;">Recommendation</div>'
                 f'</div>', unsafe_allow_html=True
             )
             
-            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="text-align:center;color:{t["text_muted"]};font-size:0.75rem;margin-top:8px;margin-bottom:12px;">'
+                f'💡 <b>AI Suitability Score</b> measures model-predicted candidate fit. <b>Resume Quality Score</b> measures document completeness and extraction quality.'
+                f'</div>',
+                unsafe_allow_html=True
+            )
             
             col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
@@ -5227,6 +5617,40 @@ def render_resume_screening_page():
                     font=dict(color=t['text_secondary'])
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+                with st.expander("🛡️ Data Extraction Trustworthiness & Audit Log", expanded=False):
+                    st.markdown(
+                        f'<div style="font-size:0.85rem;color:{t["text_secondary"]};margin-bottom:12px;">'
+                        f'Feature-level extraction confidence breakdown and recruiter corrections applied to candidate data:</div>',
+                        unsafe_allow_html=True
+                    )
+                    conf_map = p_data.get("confidences", {})
+                    corr_map = p_data.get("corrected_fields", {})
+                    raw_dict = p_data.get("raw_data", {})
+
+                    audit_rows = ""
+                    for fk, fval in raw_dict.items():
+                        if fk in ["Candidate ID", "enrollee_id", "prediction_probability", "candidate_name"]:
+                            continue
+                        c_info = conf_map.get(fk, {})
+                        bdg = c_info.get("badge", "⚪ Defaulted")
+                        rsn = c_info.get("reason", "")
+                        if fk in corr_map:
+                            bdg = corr_map[fk].get("badge", "✏️ Recruiter Corrected")
+                            orig_v = corr_map[fk].get("from")
+                            rsn = f"Corrected by recruiter from '{orig_v}'"
+
+                        fk_title = fk.replace("_", " ").title()
+                        audit_rows += (
+                            f'<div style="display:flex;align-items:center;justify-content:space-between;'
+                            f'padding:8px 0;border-bottom:1px solid {t["divider"]};font-size:0.83rem;">'
+                            f'<div><span style="font-weight:700;color:{t["text_primary"]};">{fk_title}</span>: '
+                            f'<span style="color:{t["text_secondary"]};">{fval}</span></div>'
+                            f'<div style="text-align:right;"><span style="font-weight:700;">{bdg}</span>'
+                            f'<div style="font-size:0.72rem;color:{t["text_muted"]};">{rsn}</div></div></div>'
+                        )
+
+                    st.markdown(audit_rows, unsafe_allow_html=True)
 
 def render_settings_page():
     t = ThemeManager.get()

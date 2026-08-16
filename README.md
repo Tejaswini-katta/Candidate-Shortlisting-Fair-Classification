@@ -92,7 +92,7 @@ Evaluated on Stratified Validation Set ($N = 3,831$):
 
 The project evaluates multiple machine learning models during benchmarking. Random Forest achieved the highest validation ROC-AUC of 0.7854.
 
-For the deployed candidate screening workflow (including **Resume Screening**, **Real-Time Prediction**, and **Candidate Ranking**), Logistic Regression is used consistently. This ensures that predictions, fairness thresholds, and SHAP explanations remain consistent across the application. The **AI Resume Screening** module processes uploaded documents entirely in memory/session state without altering the existing training or fairness artifacts, ensuring strict data immutability.
+For the deployed candidate screening workflow (including **Resume Screening**, **Real-Time Prediction**, and **Candidate Ranking**), Logistic Regression is used consistently. This ensures that predictions, fairness thresholds, and SHAP explanations remain consistent across the application. The **AI Resume Screening & Validation** module processes uploaded documents entirely in memory/session state without altering the existing training or fairness artifacts, ensuring strict data immutability. It includes deterministic field-level extraction confidence scoring (High/Medium/Low), a 0–100% Resume Quality Score, recruiter edit tracking, and data trustworthiness auditing.
 
 ### 3. Algorithmic Fairness Audit (Fairlearn Framework)
 Post-processing decision threshold optimization across **Gender** groups ($N = 3,831$ Validation Candidates):
