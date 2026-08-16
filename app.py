@@ -24,6 +24,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
 import plotly.express as px
+import PyPDF2
+import docx
+import io
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1055,6 +1058,47 @@ def _build_ranking_df() -> pd.DataFrame:
     # Store full rec dict as JSON string for spotlight panel lookup
     merged["_rec_json"]      = recs.apply(lambda r: json.dumps(r))
 
+    # ── Inject Phase 8 Resume Candidate (In-Memory Only) ─────────────────────
+    if "resume_candidate" in st.session_state and st.session_state["resume_candidate"]:
+        rc = st.session_state["resume_candidate"]
+        prob = rc.get("prediction_probability", 0)
+        
+        if prob >= 0.8:
+            tier = "High Priority"
+        elif prob >= 0.6:
+            tier = "Qualified"
+        elif prob >= 0.4:
+            tier = "Extended"
+        else:
+            tier = "Reserve"
+            
+        rc_row = {
+            "Candidate ID": rc.get("Candidate ID"),
+            "Suitability Score": prob,
+            "Shortlisted": 1 if prob >= 0.50 else 0, # Rough default logic since fairness thresholds might differ per group
+            "Percentile": 0.0,
+            "Priority Tier": tier,
+            "Gender": str(rc.get("gender", "Unknown")),
+            "Experience": str(rc.get("experience", "Unknown")),
+            "Education": str(rc.get("education_level", "Unknown")),
+            "Major": str(rc.get("major_discipline", "Unknown")),
+            "Company Type": str(rc.get("company_type", "Unknown")),
+            "Company Size": str(rc.get("company_size", "Unknown")),
+            "City CDI": rc.get("city_development_index"),
+            "Training Hours": rc.get("training_hours"),
+            "Relevant Exp": str(rc.get("relevent_experience", "Unknown")),
+            "Candidate Name": rc.get("candidate_name", "Resume Candidate"),
+        }
+        
+        rec = generate_candidate_recommendation(rc_row)
+        rc_row["Recommendation"] = rec["action"]
+        rc_row["Confidence"] = rec["confidence"]
+        rc_row["_rec_json"] = json.dumps(rec)
+        
+        # Append dynamically to the top
+        rc_df = pd.DataFrame([rc_row])
+        merged = pd.concat([rc_df, merged], ignore_index=True)
+
     return merged
 
 
@@ -1949,7 +1993,13 @@ _LAST_NAMES   = ["Sharma","Patel","Singh","Kumar","Gupta","Reddy","Verma",
 
 def _generate_candidate_name(enrollee_id, gender: str = "Unknown") -> str:
     """Deterministic name from enrollee_id seed — same ID always gives same name."""
-    rng = random.Random(int(str(enrollee_id)))
+    s_id = str(enrollee_id)
+    if s_id.isdigit():
+        seed = int(s_id)
+    else:
+        import hashlib
+        seed = int(hashlib.md5(s_id.encode("utf-8")).hexdigest(), 16) & 0xffffffff
+    rng = random.Random(seed)
     first = rng.choice(_FEMALE_NAMES if gender == "Female" else _MALE_NAMES)
     return f"{first} {rng.choice(_LAST_NAMES)}"
 
@@ -2134,7 +2184,8 @@ def render_candidate_profile_page(candidate_id: str | None):
     with top_left:
         if st.button("← Back to Rankings", key="profile_back_btn"):
             st.session_state["view_profile_id"] = None
-            st.session_state["current_page"] = "📋  Candidate Rankings"
+            st.session_state["nav_goto"] = "📋  Candidate Rankings"
+            st.session_state.pop("nav_radio", None)
             st.rerun()
     with top_right:
         all_ids = df["Candidate ID"].astype(str).tolist() if not df.empty else []
@@ -2170,7 +2221,10 @@ def render_candidate_profile_page(candidate_id: str | None):
 
     # ── Profile meta ─────────────────────────────────────────────────────────
     gender      = r.get("Gender", "Unknown")
-    name        = _generate_candidate_name(cid, gender)
+    if str(cid).startswith("RESUME-"):
+        name = r.get("Candidate Name", "Resume Candidate")
+    else:
+        name = _generate_candidate_name(cid, gender)
     score       = float(r.get("Suitability Score", 0))
     percentile  = float(r.get("Percentile", 0))
     tier        = r.get("Priority Tier", "Reserve")
@@ -2579,7 +2633,8 @@ def render_candidate_profile_page(candidate_id: str | None):
         with dl3:
             if st.button("← Back to Rankings", use_container_width=True, key="back_from_actions"):
                 st.session_state["view_profile_id"] = None
-                st.session_state["current_page"] = "📋  Candidate Rankings"
+                st.session_state["nav_goto"] = "📋  Candidate Rankings"
+                st.session_state.pop("nav_radio", None)
                 st.rerun()
 
 
@@ -4630,6 +4685,549 @@ def render_prediction_page():
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE 6: SETTINGS  — theme control + model info + about
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE 8: RESUME UPLOAD & AI SCREENING
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re
+
+def _extract_candidate_name(text: str) -> str:
+    """Extract candidate name from resume text using rule-based parsing."""
+    if not text:
+        return "Name Not Detected"
+    
+    # Try looking for Name: or Candidate Name: or Full Name:
+    patterns = [
+        r"(?i)(?:candidate\s+name|full\s+name|name)\s*:\s*([^\n\r]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            name = match.group(1).strip()
+            if 2 < len(name) < 60:
+                return name
+
+    # Fallback: inspect the first few non-empty lines
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    ignore_keywords = {
+        "resume", "cv", "curriculum", "vitae", "summary", "experience", "education",
+        "work", "project", "profile", "about", "contact", "phone", "email",
+        "skills", "objective", "certifications", "interests", "languages",
+        "candidate", "information", "details", "personal", "history"
+    }
+    
+    for line in lines[:4]:
+        words = line.split()
+        if 2 <= len(words) <= 4:
+            if not any(char.isdigit() for char in line):
+                if "@" not in line and "http" not in line and ".com" not in line:
+                    if not any(w.lower() in ignore_keywords for w in words):
+                        return line
+
+    return "Name Not Detected"
+
+def _extract_pdf_text(file_obj) -> str:
+    try:
+        reader = PyPDF2.PdfReader(file_obj)
+        text = ""
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
+        return text.strip()
+    except Exception as e:
+        return ""
+
+def _extract_docx_text(file_obj) -> str:
+    try:
+        doc = docx.Document(file_obj)
+        return "\n".join([p.text for p in doc.paragraphs]).strip()
+    except Exception as e:
+        return ""
+
+def _extract_resume_text(file_obj, filename: str) -> str:
+    ext = filename.split('.')[-1].lower()
+    if ext == 'pdf':
+        return _extract_pdf_text(file_obj)
+    elif ext == 'docx':
+        return _extract_docx_text(file_obj)
+    elif ext == 'txt':
+        try:
+            return file_obj.getvalue().decode("utf-8").strip()
+        except Exception:
+            return ""
+    return ""
+
+def _extract_candidate_fields(text: str) -> dict:
+    """
+    Deterministic rule-based keyword matcher.
+    Maps resume text to expected CandidatePreprocessor categorical fields.
+    Does NOT hallucinate or infer protected attributes (Gender is always None).
+    """
+    text_lower = text.lower()
+    fields = {
+        "city_development_index": None,
+        "training_hours": None,
+        "gender": "Not Provided",  # STRICT PRIVACY RULE
+        "relevent_experience": None,
+        "enrolled_university": None,
+        "education_level": None,
+        "major_discipline": None,
+        "experience": None,
+        "company_size": None,
+        "company_type": None,
+        "last_new_job": None
+    }
+
+    # Education Level
+    if any(k in text_lower for k in ["phd", "ph.d", "doctorate"]):
+        fields["education_level"] = "Phd"
+    elif any(k in text_lower for k in ["masters", "m.s", "mba", "m.a"]):
+        fields["education_level"] = "Masters"
+    elif any(k in text_lower for k in ["graduate", "bachelors", "b.s", "b.a", "b.tech", "degree"]):
+        fields["education_level"] = "Graduate"
+    elif any(k in text_lower for k in ["high school"]):
+        fields["education_level"] = "High School"
+    elif any(k in text_lower for k in ["primary school"]):
+        fields["education_level"] = "Primary School"
+
+    # Major
+    if any(k in text_lower for k in ["computer", "science", "engineering", "math", "technology", "stem"]):
+        fields["major_discipline"] = "STEM"
+    elif any(k in text_lower for k in ["business", "management", "finance", "accounting"]):
+        fields["major_discipline"] = "Business Degree"
+    elif any(k in text_lower for k in ["arts", "design"]):
+        fields["major_discipline"] = "Arts"
+    elif any(k in text_lower for k in ["humanities", "history", "english"]):
+        fields["major_discipline"] = "Humanities"
+
+    # Relevant Experience
+    if any(k in text_lower for k in ["data scientist", "machine learning", "data engineer", "software engineer", "developer", "analyst"]):
+        fields["relevent_experience"] = "Has relevent experience"
+
+    # Experience Years (naive numeric extraction around "years")
+    if "years" in text_lower:
+        idx = text_lower.find("years")
+        context = text_lower[max(0, idx-10):idx]
+        import re
+        nums = re.findall(r'\d+', context)
+        if nums:
+            val = int(nums[-1])
+            if val < 1: fields["experience"] = "<1"
+            elif val > 20: fields["experience"] = ">20"
+            else: fields["experience"] = "1-20"
+
+    # University
+    if any(k in text_lower for k in ["university", "college", "institute"]):
+        if "expected" in text_lower or "present" in text_lower:
+            fields["enrolled_university"] = "Full time course"
+        else:
+            fields["enrolled_university"] = "no_enrollment"
+
+    # Company Type
+    if any(k in text_lower for k in ["startup", "start-up"]):
+        fields["company_type"] = "Funded Startup"
+    elif any(k in text_lower for k in ["public", "government"]):
+        fields["company_type"] = "Public Sector"
+    elif any(k in text_lower for k in ["ngo", "non-profit"]):
+        fields["company_type"] = "NGO"
+    elif any(k in text_lower for k in ["ltd", "private", "inc"]):
+        fields["company_type"] = "Pvt Ltd"
+
+    return fields
+
+def render_resume_screening_page():
+    """Phase 8: Resume Upload & AI Screening"""
+    t = ThemeManager.get()
+
+    # ── Page header ───────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{t["header_bg"]};border:1px solid {t["header_border"]};'
+        f'border-radius:16px;padding:28px 32px;margin-bottom:24px;">'
+        f'<div style="display:flex;align-items:center;gap:14px;">'
+        f'<div style="font-size:2.4rem;">📄</div>'
+        f'<div><div style="color:{t["header_title"]};font-size:1.55rem;font-weight:800;'
+        f'letter-spacing:-0.02em;">AI Resume Screening</div>'
+        f'<div style="color:{t["header_sub"]};font-size:0.88rem;margin-top:3px;">'
+        f'Upload a candidate resume and evaluate suitability using the FairHire AI screening pipeline.</div>'
+        f'</div></div></div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Privacy notice ────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div style="background:{t["info_bg"]};border:1px solid {t["info_border"]};border-radius:12px;padding:16px;margin-bottom:24px;">'
+        f'<div style="font-weight:700;color:{t["text_primary"]};font-size:0.9rem;margin-bottom:6px;">⚖️ Fairness & Responsible AI</div>'
+        f'<div style="font-size:0.85rem;color:{t["text_secondary"]};line-height:1.6;">'
+        f'• Protected attributes (Gender) are <b>not inferred</b> from resume content.<br>'
+        f'• Resume content is kept strictly local and is not sent to external APIs.<br>'
+        f'• The production screening model uses the existing fairness configuration.'
+        f'</div></div>',
+        unsafe_allow_html=True
+    )
+
+    # State management
+    if "resume_file_id" not in st.session_state:
+        st.session_state["resume_file_id"] = None
+        st.session_state["resume_text"] = ""
+        st.session_state["resume_fields"] = {}
+        st.session_state["resume_name"] = ""
+        st.session_state["resume_prediction"] = None
+
+    uploaded_file = st.file_uploader("Upload Candidate Resume", type=["pdf", "docx", "txt"])
+
+    if uploaded_file:
+        file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+        
+        # If new file uploaded, parse it
+        if st.session_state["resume_file_id"] != file_id:
+            st.session_state["resume_file_id"] = file_id
+            st.session_state["resume_prediction"] = None # Reset prediction
+            
+            with st.spinner("Extracting text..."):
+                text = _extract_resume_text(uploaded_file, uploaded_file.name)
+                st.session_state["resume_text"] = text
+                if text:
+                    st.session_state["resume_fields"] = _extract_candidate_fields(text)
+                    st.session_state["resume_name"] = _extract_candidate_name(text)
+                else:
+                    st.session_state["resume_fields"] = {}
+                    st.session_state["resume_name"] = "Name Not Detected"
+
+        if not st.session_state["resume_text"]:
+            st.error("Unable to extract text from this resume. Please upload a text-based PDF, DOCX, or TXT file.")
+            return
+
+        with st.expander("📄 Extracted Resume Text", expanded=False):
+            st.text_area("Raw Text", value=st.session_state["resume_text"], height=200, disabled=True, label_visibility="collapsed")
+
+        # ── Form logic ────────────────────────────────────────────────────────
+        st.markdown(f'<div class="section-header">🔍 Review Candidate Information</div>', unsafe_allow_html=True)
+        
+        fields = st.session_state["resume_fields"]
+        
+        with st.form("resume_review_form", clear_on_submit=False):
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Education Level
+                edu_idx = 0
+                edu_opts = ["Unknown", "Primary School", "High School", "Graduate", "Masters", "Phd"]
+                if fields.get("education_level") in edu_opts:
+                    edu_idx = edu_opts.index(fields["education_level"])
+                label = "✓ Extracted: Education Level" if fields.get("education_level") else "⚠ Needs Review: Education Level"
+                f_edu = st.selectbox(label, edu_opts, index=edu_idx)
+
+                # Major Discipline
+                maj_idx = 0
+                maj_opts = ["Unknown", "STEM", "Business Degree", "Arts", "Humanities", "No Major", "Other"]
+                if fields.get("major_discipline") in maj_opts:
+                    maj_idx = maj_opts.index(fields["major_discipline"])
+                label = "✓ Extracted: Major / Discipline" if fields.get("major_discipline") else "⚠ Needs Review: Major / Discipline"
+                f_maj = st.selectbox(label, maj_opts, index=maj_idx)
+                
+                # Relevant Experience
+                rel_idx = 0
+                rel_opts = ["No relevent experience", "Has relevent experience"]
+                if fields.get("relevent_experience") in rel_opts:
+                    rel_idx = rel_opts.index(fields["relevent_experience"])
+                label = "✓ Extracted: Relevant Experience" if fields.get("relevent_experience") else "⚠ Needs Review: Relevant Experience"
+                f_rel = st.selectbox(label, rel_opts, index=rel_idx)
+
+                # Enrolled University
+                uni_idx = 0
+                uni_opts = ["Unknown", "no_enrollment", "Full time course", "Part time course"]
+                if fields.get("enrolled_university") in uni_opts:
+                    uni_idx = uni_opts.index(fields["enrolled_university"])
+                label = "✓ Extracted: University Enrollment" if fields.get("enrolled_university") else "⚠ Needs Review: University Enrollment"
+                f_uni = st.selectbox(label, uni_opts, index=uni_idx)
+                
+                # Gender
+                gen_idx = 0
+                gen_opts = ["Not Provided", "Male", "Female", "Other"]
+                f_gen = st.selectbox("⚠ Needs Review: Gender (Fairness Requirement)", gen_opts, index=gen_idx)
+                
+            with col2:
+                # Experience
+                exp_idx = 0
+                exp_opts = ["<1", "1-20", ">20"]
+                if fields.get("experience") in exp_opts:
+                    exp_idx = exp_opts.index(fields["experience"])
+                label = "✓ Extracted: Years of Experience" if fields.get("experience") else "⚠ Needs Review: Years of Experience"
+                f_exp = st.selectbox(label, exp_opts, index=exp_idx)
+                
+                # Company Size
+                size_idx = 0
+                size_opts = ["Unknown", "<10", "10-49", "50-99", "100-500", "500-999", "1000-4999", "5000-9999", "10000+"]
+                if fields.get("company_size") in size_opts:
+                    size_idx = size_opts.index(fields["company_size"])
+                label = "✓ Extracted: Company Size" if fields.get("company_size") else "⚠ Needs Review: Company Size"
+                f_size = st.selectbox(label, size_opts, index=size_idx)
+                
+                # Company Type
+                type_idx = 0
+                type_opts = ["Unknown", "Pvt Ltd", "Funded Startup", "Early Stage Startup", "Public Sector", "NGO", "Other"]
+                if fields.get("company_type") in type_opts:
+                    type_idx = type_opts.index(fields["company_type"])
+                label = "✓ Extracted: Company Type" if fields.get("company_type") else "⚠ Needs Review: Company Type"
+                f_type = st.selectbox(label, type_opts, index=type_idx)
+                
+                # Last New Job
+                job_idx = 0
+                job_opts = ["never", "1", "2", "3", "4", ">4"]
+                if fields.get("last_new_job") in job_opts:
+                    job_idx = job_opts.index(fields["last_new_job"])
+                label = "✓ Extracted: Years Since Last Job" if fields.get("last_new_job") else "⚠ Needs Review: Years Since Last Job"
+                f_job = st.selectbox(label, job_opts, index=job_idx)
+
+                # Numeric Inputs
+                label = "✓ Extracted: Training Hours" if fields.get("training_hours") is not None else "⚠ Needs Review: Training Hours"
+                f_train = st.number_input(label, min_value=1, max_value=500, value=fields.get("training_hours") or 50)
+                
+                label = "✓ Extracted: City Development Index" if fields.get("city_development_index") is not None else "⚠ Needs Review: City Development Index"
+                f_cdi = st.number_input(label, min_value=0.0, max_value=1.0, value=fields.get("city_development_index") or 0.850, step=0.01)
+
+            st.markdown("<div style='margin-top:20px;'></div>", unsafe_allow_html=True)
+            submit = st.form_submit_button("🚀 Screen Candidate")
+            
+            if submit:
+                mapped_gender = "Unknown" if f_gen == "Not Provided" else f_gen
+                
+                input_data = {
+                    "city_development_index": float(f_cdi),
+                    "training_hours": int(f_train),
+                    "gender": mapped_gender,
+                    "relevent_experience": f_rel,
+                    "enrolled_university": f_uni,
+                    "education_level": f_edu,
+                    "major_discipline": f_maj,
+                    "experience": f_exp,
+                    "company_size": f_size,
+                    "company_type": f_type,
+                    "last_new_job": f_job
+                }
+                
+                config_path  = os.path.join("models", "trained_models", "preprocessor_config.json")
+                if not os.path.exists(config_path):
+                    st.error("Missing ML models. Run `python run_step3_and_4.py`")
+                    st.stop()
+                    
+                config = json.load(open(config_path))
+                
+                try:
+                    import sys
+                    if "src" not in sys.path:
+                        sys.path.insert(0, ".")
+                    from src.preprocessing import CandidatePreprocessor, CustomStandardScaler
+                    from src.modeling import LogisticRegressionModel
+                    
+                    df_in = pd.DataFrame([input_data])
+                    
+                    prep = CandidatePreprocessor()
+                    prep.feature_names = config["feature_names"]
+                    prep.nominal_categories = config["nominal_categories"]
+                    scaler = CustomStandardScaler()
+                    scaler.mean_  = pd.Series(config["scaler_mean"])
+                    scaler.scale_ = pd.Series(config["scaler_scale"])
+                    prep.scaler = scaler
+                    
+                    X_proc = prep.transform(df_in)
+                    
+                    X_train = pd.read_csv(
+                        os.path.join("data", "processed", "X_train.csv")
+                    ).values
+                    y_train = pd.read_csv(
+                        os.path.join("data", "processed", "y_train.csv")
+                    ).values.ravel()
+                    
+                    model = LogisticRegressionModel(lr=0.08, n_iters=400, l2_reg=0.1)
+                    model.fit(X_train, y_train)
+                    
+                    prob = float(model.predict_proba(X_proc.values)[0, 1])
+                    
+                    import random
+                    temp_id = f"RESUME-{random.randint(100000, 999999)}"
+                    
+                    input_data["Candidate ID"] = temp_id
+                    input_data["enrollee_id"] = temp_id
+                    input_data["prediction_probability"] = prob
+                    input_data["candidate_name"] = st.session_state.get("resume_name", "Resume Candidate")
+                    
+                    st.session_state["resume_candidate"] = input_data
+                    
+                    st.session_state["resume_prediction"] = {
+                        "id": temp_id,
+                        "prob": prob,
+                        "gender": mapped_gender,
+                        "features": X_proc.values[0],
+                        "feature_names": prep.feature_names,
+                        "raw_data": input_data,
+                        "weights": list(model.weights),
+                        "bias": float(model.bias)
+                    }
+                except Exception as e:
+                    st.error(f"Screening Error: {str(e)}")
+
+        # ── Display Results ───────────────────────────────────────────────────
+        if st.session_state["resume_prediction"]:
+            st.markdown("<hr style='border-color:var(--divider); margin: 30px 0;'>", unsafe_allow_html=True)
+            
+            p_data = st.session_state["resume_prediction"]
+            prob = p_data["prob"]
+            mapped_gender = p_data["gender"]
+            
+            fair_path = os.path.join("models", "trained_models", "fairness_config.json")
+            fair_config = json.load(open(fair_path)) if os.path.exists(fair_path) else {}
+            fair_thresholds = fair_config.get("fair_thresholds", {"Female": 0.47, "Male": 0.46, "Other": 0.49, "Unknown": 0.60})
+            
+            threshold = fair_thresholds.get(mapped_gender, 0.50)
+            is_suitable = int(prob >= threshold)
+            
+            if prob >= 0.8:
+                tier = "High Priority"
+                color = "#34d399"
+                icon = "🌟"
+                recommendation = "Immediate Interview"
+            elif prob >= 0.6:
+                tier = "Qualified"
+                color = "#60a5fa"
+                icon = "✅"
+                recommendation = "Schedule Interview"
+            elif prob >= 0.4:
+                tier = "Extended"
+                color = "#fbbf24"
+                icon = "⚠️"
+                recommendation = "Keep in Pipeline"
+            else:
+                tier = "Reserve"
+                color = "#f87171"
+                icon = "⛔"
+                recommendation = "Future Consideration"
+                
+            name_disp = p_data["raw_data"].get("candidate_name", "Resume Candidate")
+            st.markdown(
+                f'<div class="section-header" style="text-align:center;font-size:1.4rem;">'
+                f'{icon} Screening Results for {name_disp}: {tier}</div>',
+                unsafe_allow_html=True
+            )
+            
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(
+                f'<div class="kpi-card" style="text-align:center;">'
+                f'<div style="font-size:1.8rem;color:{color};font-weight:800;">{prob*100:.1f}%</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.75rem;font-weight:700;text-transform:uppercase;">Suitability Score</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+            c2.markdown(
+                f'<div class="kpi-card" style="text-align:center;">'
+                f'<div style="font-size:1.4rem;color:{t["text_primary"]};font-weight:800;">{tier}</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.75rem;font-weight:700;text-transform:uppercase;">Priority Tier</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+            c3.markdown(
+                f'<div class="kpi-card" style="text-align:center;">'
+                f'<div style="font-size:1.1rem;color:{t["text_primary"]};font-weight:800;margin-top:4px;">{recommendation}</div>'
+                f'<div style="color:{t["text_muted"]};font-size:0.75rem;font-weight:700;text-transform:uppercase;margin-top:6px;">Recommendation</div>'
+                f'</div>', unsafe_allow_html=True
+            )
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            col_b1, col_b2, col_b3 = st.columns(3)
+            with col_b1:
+                if st.button("👤 View Candidate Profile", key="btn_view_profile", use_container_width=True):
+                    st.session_state["view_profile_id"] = p_data["id"]
+                    st.session_state["nav_goto"] = "👤  Candidate Profile"
+                    st.rerun()
+            with col_b2:
+                if st.button("⭐ Add to Shortlist", key="btn_shortlist", use_container_width=True):
+                    shortlist = _load_shortlist()
+                    if not any(r.get("candidate_id") == p_data["id"] for r in shortlist):
+                        shortlist.append({
+                            "candidate_id": p_data["id"],
+                            "candidate_name": name_disp,
+                            "suitability_score": float(prob),
+                            "priority_tier": tier,
+                            "recommendation": recommendation,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                        _save_shortlist(shortlist)
+                    st.success("Candidate added to shortlist.")
+            with col_b3:
+                report_content = f"Screening Report\nCandidate ID: {p_data['id']}\nCandidate Name: {name_disp}\nScore: {prob:.4f}\nTier: {tier}\n"
+                st.download_button("📥 Download Report", data=report_content, file_name=f"{p_data['id']}_report.txt", mime="text/plain", use_container_width=True)
+
+            st.markdown(f'<div class="section-header">Why did FairHire AI make this recommendation?</div>', unsafe_allow_html=True)
+            
+            shap_path = os.path.join("reports", "metrics", "shap_feature_importance.csv")
+            if os.path.exists(shap_path):
+                shap_df_glob = pd.read_csv(shap_path)
+                import numpy as np
+                import plotly.graph_objects as go
+                
+                feat_names = p_data["feature_names"]
+                features_val = p_data["features"]
+                
+                mean_vals = np.zeros(len(feat_names)) 
+                model_w = np.array(p_data["weights"])
+                local_shap = model_w * (features_val - mean_vals)
+                
+                local_shap_df = pd.DataFrame({
+                    "Feature": feat_names,
+                    "Importance": local_shap
+                })
+                local_shap_df["Abs_Importance"] = local_shap_df["Importance"].abs()
+                merged = local_shap_df.sort_values("Abs_Importance", ascending=False).head(10)
+                
+                # Build narrative dictionary using the local function
+                cand_row_for_narrative = {
+                    "Suitability Score": prob,
+                    "Priority Tier":     tier,
+                    "Experience":        p_data["raw_data"]["experience"],
+                    "Education":         p_data["raw_data"]["education_level"],
+                    "Training Hours":    p_data["raw_data"]["training_hours"],
+                    "Relevant Exp":      p_data["raw_data"]["relevent_experience"],
+                    "Major":             p_data["raw_data"]["major_discipline"],
+                    "Company Type":      p_data["raw_data"]["company_type"],
+                    "City CDI":          p_data["raw_data"]["city_development_index"],
+                }
+                
+                narrative_data = generate_candidate_narrative(cand_row_for_narrative)
+                narrative_text = narrative_data.get("narrative", f"Candidate scored {prob*100:.1f}% on the suitability model.")
+                
+                st.markdown(
+                    f'<div style="background:{t["card_bg"]};border:1px solid {t["card_border"]};border-radius:12px;padding:24px;">'
+                    f'<div style="color:{t["text_primary"]};font-size:0.95rem;line-height:1.6;white-space:pre-wrap;">'
+                    f'{narrative_text}</div></div>',
+                    unsafe_allow_html=True
+                )
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                merged = merged.sort_values("Importance", ascending=True)
+                colors = ["#f87171" if val < 0 else "#34d399" for val in merged["Importance"]]
+                readable_labels = [
+                    _FEATURE_LABELS.get(f.rsplit("_",1)[0], f.replace("_"," ").title()) 
+                    for f in merged["Feature"]
+                ]
+                
+                fig = go.Figure(go.Bar(
+                    x=merged["Importance"],
+                    y=readable_labels,
+                    orientation='h',
+                    marker_color=colors
+                ))
+                fig.update_layout(
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    height=300,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    xaxis=dict(title="Contribution to Score", gridcolor=t['divider'], zerolinecolor=t['text_muted']),
+                    yaxis=dict(gridcolor='rgba(0,0,0,0)'),
+                    font=dict(color=t['text_secondary'])
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
 def render_settings_page():
     t = ThemeManager.get()
 
@@ -4794,6 +5392,7 @@ _NAV_OPTIONS = [
     "⚖️  Fairness & Bias Audit",
     "🔍  SHAP Explainability",
     "🚀  Real-Time Predictor",
+    "📄  Resume Screening",
     "─────────────",
     "💼  Job Descriptions",
     "👤  Candidate Profile",
@@ -4904,6 +5503,8 @@ def main():
         render_explainability_page()
     elif "Predictor" in page:
         render_prediction_page()
+    elif "Resume" in page:
+        render_resume_screening_page()
     elif "Settings" in page:
         render_settings_page()
     elif "─────" in page:

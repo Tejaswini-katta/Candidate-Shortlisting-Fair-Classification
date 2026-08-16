@@ -18,3 +18,7 @@ streamlit>=1.22.0
 
 # Model Persistence
 joblib>=1.2.0
+
+# Document Parsing
+PyPDF2>=3.0.0
+python-docx>=0.8.11
